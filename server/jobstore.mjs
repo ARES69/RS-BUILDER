@@ -23,13 +23,14 @@ async function blob() {
   return blobP
 }
 
-/* OIDC zero-config: writes and lists work tokenless, but reads need an
-   explicit token — hand over the static one or the Vercel OIDC JWT. */
+/* OIDC zero-config: put/list pick the Vercel OIDC token up automatically,
+   but get() demands explicit credentials — pass the static token when present
+   or the OIDC JWT via the library's own `oidcToken` option. */
 let tokenP = null
-async function blobReadToken() {
-  if (process.env.BLOB_READ_WRITE_TOKEN) return process.env.BLOB_READ_WRITE_TOKEN
+async function blobReadOptions() {
+  if (process.env.BLOB_READ_WRITE_TOKEN) return { token: process.env.BLOB_READ_WRITE_TOKEN }
   tokenP = tokenP ?? import('@vercel/oidc').then((m) => m.getToken())
-  return tokenP
+  return { oidcToken: await tokenP }
 }
 
 const prefix = 'rsb-jobs/'
@@ -82,7 +83,7 @@ export async function getJob(id) {
   if (blobToken()) {
     const { get } = await blob()
     try {
-      const res = await get(prefix + id, { token: await blobReadToken() })
+      const res = await get(prefix + id, await blobReadOptions())
       if (!res) return null
       return JSON.parse(await res.text())
     } catch {
