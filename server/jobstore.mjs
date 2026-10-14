@@ -28,9 +28,9 @@ async function blob() {
    or the OIDC JWT via the library's own `oidcToken` option. */
 let tokenP = null
 async function blobReadOptions() {
-  if (process.env.BLOB_READ_WRITE_TOKEN) return { token: process.env.BLOB_READ_WRITE_TOKEN }
+  if (process.env.BLOB_READ_WRITE_TOKEN) return { access: 'private', token: process.env.BLOB_READ_WRITE_TOKEN }
   tokenP = tokenP ?? import('@vercel/oidc').then((m) => m.getVercelOidcToken())
-  return { oidcToken: await tokenP }
+  return { access: 'private', oidcToken: await tokenP }
 }
 
 const prefix = 'rsb-jobs/'
