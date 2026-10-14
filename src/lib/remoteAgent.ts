@@ -32,6 +32,8 @@ export type BackendStatus = {
   runtimeKeys: string[]
   serverTime: string
   quotaNote?: string
+  jobStore?: string
+  capabilities?: string[]
 }
 
 /** Live introspection of the agent backend (engine, providers, cooldowns). */
@@ -68,11 +70,127 @@ export async function checkRemoteHealth(): Promise<boolean> {
   }
 }
 
+let capsPromise: Promise<BackendStatus | null> | null = null
+export function backendCaps(): Promise<BackendStatus | null> {
+  capsPromise = capsPromise ?? fetchBackendStatus()
+  return capsPromise
+}
+
+let activeJobId: string | null = null
+export const activeRemoteJob = (): string | null => activeJobId
+
+/** Asks a queued run to stop (the worker notices between event batches). */
+export function cancelActiveRemote(): void {
+  if (!activeJobId || !AGENT_API_URL) return
+  const id = activeJobId
+  fetch(AGENT_API_URL.replace(/\/$/, '') + '/v1/runs/' + id + '/cancel', {
+    method: 'POST',
+    headers: runtimeHeaders(),
+  }).catch(() => {})
+}
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
+
+/**
+ * Queued run: the job lives on the server, this generator only tails it.
+ * Closing the tab, losing the network or a frozen worker do not kill the run;
+ * the tail re-attaches with its cursor until a terminal status arrives.
+ */
+async function* runQueued(prompt: string, locale: Locale, signal?: AbortSignal): AsyncGenerator<AgentEvent> {
+  const base = (AGENT_API_URL ?? '').replace(/\/$/, '')
+  const created = await fetch(base + '/v1/runs', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', ...runtimeHeaders() },
+    body: JSON.stringify({ prompt, locale, mode: 'queue' }),
+    signal,
+  })
+  if (!created.ok) throw new RemoteAgentError('Agent backend rejected the job: ' + created.status, created.status)
+  const info = (await created.json()) as { jobId: string; streamUrl: string }
+  activeJobId = info.jobId
+  const streamPath = info.streamUrl.replace(/^\/api/, '')
+
+  let cursor = 0
+  let reconnects = 0
+  let terminal = false
+  while (!terminal && reconnects < 8 && !signal?.aborted) {
+    try {
+      const response = await fetch(base + streamPath + '?cursor=' + cursor, {
+        headers: { accept: 'text/event-stream', ...runtimeHeaders() },
+        signal,
+      })
+      if (!response.ok || !response.body) throw new RemoteAgentError('job stream ' + response.status, response.status)
+      const reader = response.body.getReader()
+      const decoder = new TextDecoder()
+      let buffer = ''
+      for (;;) {
+        const { done, value } = await reader.read()
+        if (done) break
+        buffer += decoder.decode(value, { stream: true })
+        let idx: number
+        while ((idx = buffer.indexOf('\n\n')) >= 0) {
+          const chunk = buffer.slice(0, idx)
+          buffer = buffer.slice(idx + 2)
+          const line = chunk.split('\n').find((l) => l.trim().startsWith('data:'))
+          if (!line) continue
+          const payload = line.trim().slice(5).trim()
+          if (!payload) continue
+          let event: Record<string, unknown>
+          try {
+            event = JSON.parse(payload)
+          } catch {
+            continue
+          }
+          if (event.type === 'job_end') {
+            terminal = true
+            if (event.status === 'failed') {
+              yield {
+                type: 'message',
+                role: 'agent',
+                text: {
+                  en: 'The queued run failed: ' + String(event.error ?? 'unknown error'),
+                  ru: 'Запуск в очереди упал: ' + String(event.error ?? 'неизвестная ошибка'),
+                },
+              } as AgentEvent
+            }
+            if (event.status !== 'done') yield { type: 'done' } as AgentEvent
+            break
+          }
+          cursor += 1
+          yield event as AgentEvent
+        }
+        if (terminal) break
+      }
+      if (!terminal) reconnects += 1
+    } catch (error) {
+      if (signal?.aborted) return
+      reconnects += 1
+      await sleep(800)
+    }
+  }
+  activeJobId = null
+}
+
 /**
  * Starts a run on the backend and yields its events as they arrive.
- * Aborting the signal closes the stream; the server stops the run.
+ * When the backend advertises the `queue` capability the run becomes a
+ * server-side job (survives tab close / network blips); otherwise the legacy
+ * synchronous SSE path is used. Aborting closes the tail; for queued runs the
+ * Stop button additionally calls cancelActiveRemote().
  */
 export async function* runRemote(
+  prompt: string,
+  locale: Locale,
+  signal?: AbortSignal,
+): AsyncGenerator<AgentEvent> {
+  const caps = await backendCaps()
+  if (caps && (caps.capabilities ?? []).includes('queue')) {
+    yield* runQueued(prompt, locale, signal)
+    return
+  }
+  yield* runRemoteSync(prompt, locale, signal)
+}
+
+async function* runRemoteSync(
   prompt: string,
   locale: Locale,
   signal?: AbortSignal,

@@ -7,8 +7,14 @@
  * The web app talks to it same-origin when built with VITE_AGENT_API_URL=/api
  * (client appends /v1/runs), so no CORS configuration is required in production.
  */
+import { randomBytes } from 'node:crypto'
 import { runEvents } from '../../server/engine.mjs'
 import { parseRuntimeKeys } from '../../server/orchestrator.mjs'
+import { createJob, jobStoreKind } from '../../server/jobstore.mjs'
+import { kickWorker, workerOrigin } from '../../server/worker.mjs'
+
+/** Queued runs need a durable store: Vercel Blob on Vercel, fs elsewhere. */
+const queueAvailable = () => jobStoreKind() === 'blob' || !process.env.VERCEL
 
 export const config = {
   runtime: 'nodejs',
@@ -43,6 +49,28 @@ export default async function handler(req, res) {
   }
   let payload = {}
   try { payload = JSON.parse(body || '{}') } catch { /* defaults */ }
+
+  /* --- queued mode: create a job, kick a worker, return immediately --- */
+  if (payload.mode === 'queue') {
+    if (!queueAvailable()) {
+      res.status(503).json({ error: 'queue unavailable: no durable job store configured' })
+      return
+    }
+    const job = await createJob({
+      prompt: payload.prompt ?? '',
+      locale: payload.locale,
+      kickToken: randomBytes(16).toString('hex'),
+    })
+    kickWorker(workerOrigin(), job)
+    res.status(202).json({
+      jobId: job.id,
+      status: job.status,
+      statusUrl: '/api/v1/runs/' + job.id,
+      streamUrl: '/api/v1/runs/' + job.id + '/stream',
+      cancelUrl: '/api/v1/runs/' + job.id + '/cancel',
+    })
+    return
+  }
 
   res.status(200)
   res.setHeader('Content-Type', 'text/event-stream; charset=utf-8')

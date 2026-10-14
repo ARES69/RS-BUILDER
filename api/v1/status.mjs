@@ -6,6 +6,7 @@
  */
 import { engineInfo, runtimeStatus, VERSION } from '../../server/engine.mjs'
 import { parseRuntimeKeys } from '../../server/orchestrator.mjs'
+import { jobStoreKind } from '../../server/jobstore.mjs'
 
 export default function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*')
@@ -23,6 +24,8 @@ export default function handler(req, res) {
     ...info,
     ...runtimeStatus(),
     runtimeKeys: runtime ? Object.keys(runtime) : [],
+    jobStore: jobStoreKind(),
+    capabilities: jobStoreKind() === 'blob' ? ['queue'] : [],
     serverTime: new Date().toISOString(),
     quotaNote: 'OpenRouter free tier: 50 req/day per account, resets 00:00 UTC; OpenCode Zen free tier is client-only since Oct 2026 (keyed = paid catalog).',
   })

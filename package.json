@@ -3,7 +3,7 @@
   "private": true,
   "version": "1.0.0",
   "type": "module",
-  "description": "RS-BUILDER \u2014 hands-on AI builder. Marketing site + agent workspace demo.",
+  "description": "RS-BUILDER — hands-on AI builder. Marketing site + agent workspace demo.",
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
@@ -20,6 +20,7 @@
     "test:orchestrator": "node scripts/test-orchestrator.mjs"
   },
   "dependencies": {
+    "@vercel/blob": "^2.8.2",
     "clsx": "^2.1.1",
     "framer-motion": "^11.18.0",
     "lucide-react": "^0.469.0",

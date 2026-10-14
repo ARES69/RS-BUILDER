@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { initialRunState, type AgentEvent, type RunState, type Scenario } from './agent'
 import { runScenario } from './agentEngine'
-import { demoForced, remoteEnabled, runRemote } from './remoteAgent'
+import { cancelActiveRemote, demoForced, remoteEnabled, runRemote } from './remoteAgent'
 import { useI18n } from '@/i18n'
 
 function reduce(state: RunState, event: AgentEvent): RunState {
@@ -66,6 +66,7 @@ export function useAgentRun() {
   const stop = useCallback(() => {
     controller.current?.abort()
     controller.current = null
+    cancelActiveRemote()
     setState((s) => (s.status === 'running' ? { ...s, status: 'stopped' } : s))
   }, [])
 

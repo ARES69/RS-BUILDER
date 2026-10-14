@@ -13,6 +13,12 @@ import { runEvents, engineInfo } from '../../server/engine.mjs'
 export const config = { runtime: 'nodejs', maxDuration: 300 }
 
 export default async function handler(req, res) {
+  // Staging/secondary projects share the account's free quotas — cron can be
+  // switched off per project without touching the code again.
+  if (process.env.RSB_CRON_DISABLED === '1') {
+    res.status(200).json({ ok: true, skipped: true, reason: 'RSB_CRON_DISABLED=1' })
+    return
+  }
   const secret = process.env.CRON_SECRET
   const url = new URL(req.url ?? '/', 'http://localhost')
   const auth = req.headers.authorization ?? ''
