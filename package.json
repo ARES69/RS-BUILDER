@@ -21,6 +21,7 @@
   },
   "dependencies": {
     "@vercel/blob": "^2.8.2",
+    "@vercel/oidc": "^4.0.1",
     "clsx": "^2.1.1",
     "framer-motion": "^11.18.0",
     "lucide-react": "^0.469.0",
