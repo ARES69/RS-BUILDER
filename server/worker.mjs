@@ -24,7 +24,7 @@ export async function kickWorker(origin, job) {
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ jobId: job.id, kickToken: job.kickToken }),
   }).catch(() => null)
-  await Promise.race([p, new Promise((r) => setTimeout(r, 1500))])
+  await Promise.race([p, new Promise((r) => setTimeout(r, 2500))])
   return true
 }
 

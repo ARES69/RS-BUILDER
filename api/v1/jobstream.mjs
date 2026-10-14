@@ -4,6 +4,7 @@
  * with the last cursor, so blips and tab closes do not lose events.
  */
 import { getJob } from '../../server/jobstore.mjs'
+import { kickWorker, workerOrigin } from '../../server/worker.mjs'
 
 export const config = { runtime: 'nodejs', maxDuration: 300 }
 
@@ -26,8 +27,13 @@ export default async function handler(req, res) {
   res.write(': rs-builder job stream\n\n')
 
   const deadline = Date.now() + 240_000
+  let lastKick = 0
   while (Date.now() < deadline) {
     const job = await getJob(id)
+    if (job && job.status === 'queued' && (job.attempts || 0) === 0 && Date.now() - job.updatedAt > 5000 && Date.now() - lastKick > 15000) {
+      lastKick = Date.now()
+      await kickWorker(workerOrigin(), job)
+    }
     if (!job) {
       res.write('data: ' + JSON.stringify({ type: 'error', message: 'job not found' }) + '\n\n')
       break

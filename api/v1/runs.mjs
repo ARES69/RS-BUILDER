@@ -10,7 +10,7 @@
 import { randomBytes } from 'node:crypto'
 import { runEvents } from '../../server/engine.mjs'
 import { parseRuntimeKeys } from '../../server/orchestrator.mjs'
-import { createJob, jobStoreKind } from '../../server/jobstore.mjs'
+import { createJob, getJob, jobStoreKind } from '../../server/jobstore.mjs'
 import { kickWorker, workerOrigin } from '../../server/worker.mjs'
 import { reapStaleJobs } from '../../server/reaper.mjs'
 
@@ -64,6 +64,14 @@ export default async function handler(req, res) {
       kickToken: randomBytes(16).toString('hex'),
     })
     kickWorker(workerOrigin(), job)
+    // The kick fetch must be dispatched while this invocation is still alive:
+    // wait for the worker's first heartbeat (or give up after 8s and let the
+    // stream/reaper kick later).
+    for (let i = 0; i < 16; i++) {
+      const fresh = await getJob(job.id)
+      if (fresh && (fresh.status !== 'queued' || (fresh.attempts || 0) > 0)) break
+      await new Promise((r) => setTimeout(r, 500))
+    }
     res.status(202).json({
       jobId: job.id,
       status: job.status,
