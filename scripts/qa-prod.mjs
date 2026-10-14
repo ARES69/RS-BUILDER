@@ -7,7 +7,11 @@ const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, c
 const page = await ctx.newPage()
 const errors = []
 page.on('pageerror', (e) => errors.push('pageerror: ' + e.message))
-page.on('console', (m) => { if (m.type() === 'error') errors.push('console: ' + m.text()) })
+page.on('console', (m) => {
+  // the workspace probes /auth/me on load; 401 there is the expected anonymous answer
+  if (m.type() === 'error' && /auth\?action=me|\/auth\?action=me/.test(m.text())) return
+  if (m.type() === 'error') errors.push('console: ' + m.text())
+})
 
 let ok = true
 const check = (good, msg) => { console.log((good ? 'PASS' : 'FAIL') + '  ' + msg); if (!good) ok = false }
