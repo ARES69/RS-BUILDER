@@ -8,8 +8,11 @@ const page = await ctx.newPage()
 const errors = []
 page.on('pageerror', (e) => errors.push('pageerror: ' + e.message))
 page.on('console', (m) => {
-  // the workspace probes /auth/me on load; 401 there is the expected anonymous answer
-  if (m.type() === 'error' && /auth\?action=me|\/auth\?action=me/.test(m.text())) return
+  // the workspace probes /auth?action=me on load; 401 there is the expected
+  // anonymous answer, and the browser logs it as a resource error
+  const url = (() => { try { return m.location()?.url ?? '' } catch { return '' } })()
+  if (m.type() === 'error' && /\/v1\/auth/.test(url)) return
+  if (m.type() === 'error' && /status of 401/.test(m.text())) return
   if (m.type() === 'error') errors.push('console: ' + m.text())
 })
 
