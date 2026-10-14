@@ -192,9 +192,15 @@ LLM-цикл с tool-calling (`server/orchestrator.mjs`), иначе детер�
 - Хранилище джобов (`server/jobstore.mjs`): **Vercel Blob** в проде (zero-config,
   `BLOB_READ_WRITE_TOKEN`), fs — локально/в тестах. `/api/v1/status` сообщает
   `jobStore` и `capabilities: ["queue"]`, когда очередь доступна.
-- Клиент хвостит джобу через `GET /api/v1/runs/:id/stream?cursor=N`: закрытая вкладка,
+- Клиент хвостит джобу через `GET /api/v1/jobstream?id=…&cursor=N`: закрытая вкладка,
   обрыв сети или перезапуск воркера не убивают запуск — хвост переподключается с курсором.
-  Кнопка Stop шлёт `POST /api/v1/runs/:id/cancel` (воркер останавливается между батчами).
+  Снапшот — `GET /api/v1/job?id=…`, стоп — `POST /api/v1/jobcancel?id=…` (воркер
+  останавливается между батчами). Плоские пути с query-параметрами вместо динамических
+  сегментов: platform-роутер молча сбрасывал `[id]`-роуты в SPA-rewrite.
+- Vercel Blob в режиме OIDC (без статического токена): `put`/`list` работают сами,
+  а `get()` требует явные `{access:'private', oidcToken}` и отдаёт байты в `stream`
+  (не Response) — учтено в `server/jobstore.mjs`. Воркер пишет документ джобы
+  целиком (single writer): read-modify-write терял батчи событий.
 - Длинные прогоны: воркер перед дедлайном platform (240s) сохраняет прогресс и запускает
   следующую инвокацию цепочкой (`kickWorker`),_bookkeeping_ переживает заморозку функции.
 - Ретраи: cron `/api/v1/reap` каждые 10 минут перезапускает джобы без heartbeat
