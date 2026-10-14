@@ -218,6 +218,7 @@ export const en = {
     title: 'Workspace',
     demoBadge: 'Simulated run · no API key needed',
     liveBadge: 'Live backend',
+    modelChip: 'Model behind this run',
     simBadge: 'Simulator',
     newTask: 'New task',
     tasks: 'Tasks',

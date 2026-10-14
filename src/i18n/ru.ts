@@ -220,6 +220,7 @@ export const ru: Dict = {
     title: 'Воркспейс',
     demoBadge: 'Симуляция запуска · API-ключ не нужен',
     liveBadge: 'Живой бэкенд',
+    modelChip: 'Модель этого запуска',
     simBadge: 'Симулятор',
     newTask: 'Новая задача',
     tasks: 'Задачи',

@@ -100,11 +100,17 @@ LLM-цикл с tool-calling (`server/orchestrator.mjs`), иначе детер�
 
 | Переменная | Пример | Зачем |
 |---|---|---|
-| `OPENAI_API_KEY` | `sk-…` | включает OpenAI-совместимый провайдер |
-| `OPENAI_BASE_URL` | `https://api.openai.com/v1` | любой OpenAI-compatible эндпоинт (OpenRouter, Together, vLLM) |
+| `OPENAI_API_KEY` | `sk-or-…` | включает OpenAI-совместимый провайдер (по умолчанию OpenRouter) |
+| `OPENAI_BASE_URL` | `https://openrouter.ai/api/v1` | любой OpenAI-compatible эндпоинт (OpenRouter, Together, vLLM) |
 | `OPENAI_MODEL` | `auto-free` | модель или `auto-free` = авто-подбор бесплатных (`:free`) моделей с тулзами |
-| `RSB_LLM_MODEL_CHAIN` | `a,b,c` | явная цепочка: при 402/403/429/404 оркестратор переходит к следующей |
-| `ANTHROPIC_API_KEY` | `sk-ant-…` | включает Anthropic (если нет OpenAI-ключа) |
+| `RSB_LLM_MODEL_CHAIN` | `a,b,c` | явная цепочка OpenRouter-моделей вместо авто-подбора |
+| `RSB_PROVIDERS` | `openrouter,groq` | порядок/состав провайдеров; `none` = только детерминированное ядро |
+| `OPENCODE_API_KEY` | — | включает OpenCode Zen (анонимный free-tier закрыт политикой с октября 2026) |
+| `RSB_ZEN_BASE_URL` | `https://opencode.ai/zen/v1` | переопределение эндпоинта Zen |
+| `RSB_ZEN_MODELS` | `a-free,b-free` | явный список Zen-моделей вместо live-каталога |
+| `GROQ_API_KEY` / `GEMINI_API_KEY` / `MISTRAL_API_KEY` / `NVIDIA_API_KEY` | — | бесплатные тиры провайдеров из awesome-free-models (включаются своим ключом) |
+| `RSB_<ID>_MODELS` | `llama-3.3-70b-versatile` | явный список моделей для keyed-провайдера (GROQ/GEMINI/MISTRAL/NIM) |
+| `ANTHROPIC_API_KEY` | `sk-ant-…` | включает Anthropic (платный, opt-in) |
 | `ANTHROPIC_MODEL` | `claude-sonnet-4-5` | модель |
 
 Что оркестратор делает по-настоящему:
@@ -117,11 +123,29 @@ LLM-цикл с tool-calling (`server/orchestrator.mjs`), иначе детер�
 Локально: `OPENAI_API_KEY=… npm run server`. Прод: `vercel env add OPENAI_API_KEY production`
 и redeploy. Проверка без настоящего ключа: `npm run test:orchestrator` (мок-LLM гонит весь цикл).
 
-**Бесплатный режим (0 кредитов):** при `OPENAI_MODEL=auto-free` оркестратор сам обнаруживает
-через `GET /v1/models` все модели с ценой $0 и поддержкой tools (кэш 10 минут) и идёт по ним
-цепочкой, пропуская 402/403 («agentic harness only»)/429/404. Статический фолбэк-чейн —
-Nemotron / Gemma / Laguna / Llama / Qwen / DeepSeek (`:free`). Выбранная модель приходит
-в событии `model` и видна в логе запуска.
+**Бесплатный режим (0 кредитов).** Порядок источников бесплатного инференса:
+
+1. **OpenCode Zen** (`https://opencode.ai/zen/v1`, паттерн из [keman-ai/dsh-opencode-zen](https://github.com/keman-ai/dsh-opencode-zen)) —
+   каталог free-моделей обнаруживается живьём через `GET /models` (кэш 1 час).
+   **Внимание:** с октября 2026 Zen отклоняет анонимные chat-completions
+   (`403 FreeTierError: free tier can only be used from within OpenCode`), поэтому
+   провайдер включается только при `OPENCODE_API_KEY` (или явно через `RSB_PROVIDERS`).
+2. **OpenRouter** — при `OPENAI_MODEL=auto-free` оркестратор сам обнаруживает через
+   `GET /models` все модели `:free` с ценой $0 и поддержкой tools (кэш 10 минут).
+   Лимит бесплатного аккаунта: **50 запросов/день на все `:free`-модели** (сброс 00:00 UTC);
+   $10 кредитов поднимают лимит до 1000/день. Статический фолбэк-чейн (снимок каталога 2026-10-14):
+   Inkling / Nemotron / Dots / Laguna / Gemma / Qwen.
+3. **Groq / Gemini / Mistral / NVIDIA NIM** — бесплатные тиры из курируемого списка
+   [12britz/awesome-free-models](https://github.com/12britz/awesome-free-models); каждый
+   включается своим ключом.
+4. **Anthropic** — платный, opt-in.
+
+Цепочка устойчива к мёртвым звеньям: любая ошибка провайдера/модели (401/402/403/404/429/5xx,
+таймаут, сеть) переключает на следующее звено, а на 429 с далёким `x-ratelimit-reset`
+провайдер уходит в cooldown до сброса квоты (не тратит round-trips впустую). Если все
+звенья мертвы — запуск мягко уходит на детерминированное ядро с понятным сообщением в треде.
+Фактически выбранная модель приходит в событии `model` и видна в логе запуска и в
+воркспейсе (чип «⚡ provider/model» под бейджем Live backend).
 
 ## Чек-лист релиза
 

@@ -217,6 +217,11 @@ export default function Workspace() {
                 <>
                   <b className="font-semibold text-fg">{t('app.liveBadge')}</b>
                   <span className="mt-0.5 block break-all font-mono text-[10.5px]">{AGENT_API_URL}</span>
+                  {state.model && (
+                    <span className="mt-1 block truncate font-mono text-[10.5px] text-cyan" title={t('app.modelChip')}>
+                      ⚡ {state.model}
+                    </span>
+                  )}
                 </>
               ) : (
                 t('app.demoBadge')

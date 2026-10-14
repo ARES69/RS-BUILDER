@@ -59,7 +59,8 @@ export type Scenario = {
 }
 
 export type AgentEvent =
-  | { type: 'run_start'; scenarioId: string }
+  | { type: 'run_start'; scenarioId?: string; runId?: string; model?: string }
+  | { type: 'model'; model: string }
   | { type: 'plan'; steps: { id: string; title: L; estimate: string }[] }
   | { type: 'step_start'; stepId: string }
   | { type: 'thought'; stepId: string; text: L }
@@ -76,6 +77,8 @@ export type AgentEvent =
 
 export type RunState = {
   status: 'idle' | 'running' | 'done' | 'stopped'
+  /** provider/model that actually serves the run (live LLM backend only). */
+  model: string | null
   plan: { id: string; title: L; estimate: string; state: 'pending' | 'active' | 'done' }[]
   thoughts: { stepId: string; text: L }[]
   tools: { stepId: string; tool: ToolCall }[]
@@ -91,6 +94,7 @@ export type RunState = {
 
 export const initialRunState: RunState = {
   status: 'idle',
+  model: null,
   plan: [],
   thoughts: [],
   tools: [],

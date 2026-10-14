@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en" class="dark">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>RS-BUILDER — Hands-on AI that builds the thing</title>
+    <meta name="description" content="RS-BUILDER is an autonomous AI builder: describe the outcome and it researches, designs, codes and ships — websites, decks, research, games and video." />
+    <meta name="theme-color" content="#07070a" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="apple-touch-icon" href="/favicon.svg" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content="RS-BUILDER — Hands-on AI that builds the thing" />
+    <meta property="og:description" content="Describe the outcome. RS-BUILDER plans it, builds it and hands you the deliverable." />
+    <meta property="og:image" content="/og-image.svg" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <script>
+      // Apply persisted theme before first paint to avoid a flash.
+      (function () {
+        try {
+          var stored = localStorage.getItem('rsb-theme');
+          var prefersLight = window.matchMedia('(prefers-color-scheme: light)').matches;
+          var dark = stored ? stored === 'dark' : !prefersLight;
+          document.documentElement.classList.toggle('dark', dark);
+          var lang = localStorage.getItem('rsb-locale');
+          if (lang) document.documentElement.lang = lang;
+        } catch (e) {}
+      })();
+    </script>
+    <script type="module" crossorigin src="/assets/index-CCP8P3Wr.js"></script>
+    <link rel="modulepreload" crossorigin href="/assets/react-DI-pxzIW.js">
+    <link rel="modulepreload" crossorigin href="/assets/motion-DP42fwyY.js">
+    <link rel="modulepreload" crossorigin href="/assets/icons-ukrlcExq.js">
+    <link rel="stylesheet" crossorigin href="/assets/index-DakmtHzm.css">
+  </head>
+  <body>
+    <div id="root"></div>
+  </body>
+</html>

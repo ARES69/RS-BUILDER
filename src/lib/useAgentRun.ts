@@ -7,7 +7,9 @@ import { useI18n } from '@/i18n'
 function reduce(state: RunState, event: AgentEvent): RunState {
   switch (event.type) {
     case 'run_start':
-      return { ...initialRunState, status: 'running' }
+      return { ...initialRunState, status: 'running', model: event.model ?? null }
+    case 'model':
+      return { ...state, model: event.model }
     case 'message':
       return {
         ...state,

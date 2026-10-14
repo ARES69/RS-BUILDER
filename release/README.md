@@ -120,6 +120,25 @@ npm run build:preview && mv preview/index.html preview/rs-builder.html   # си�
 Прод на Vercel использует same-origin `/api` (`VITE_AGENT_API_URL=/api`), локальная
 разработка — standalone сервер; выкатка одной командой: `npm run deploy:vercel`.
 
+## Бесплатные модели ($0)
+
+Оркестратор умеет работать вообще без затрат — цепочка источников бесплатного инференса
+(паттерны из [keman-ai/dsh-opencode-zen](https://github.com/keman-ai/dsh-opencode-zen) и
+[12britz/awesome-free-models](https://github.com/12britz/awesome-free-models)):
+
+| # | Провайдер | Как включается | Реальность (октябрь 2026) |
+|---|---|---|---|
+| 1 | **OpenCode Zen** | `OPENCODE_API_KEY` (или явно `RSB_PROVIDERS=opencode-zen`) | анонимный free-tier закрыт политикой: `403 FreeTierError` («only from within OpenCode»); каталог `/models` по-прежнему публичен и обнаруживается живьём |
+| 2 | **OpenRouter `:free`** | `OPENAI_API_KEY` + `OPENAI_MODEL=auto-free` | live-дискавери $0-моделей с tools (кэш 10 мин); лимит бесплатного аккаунта **50 запросов/день** (сброс 00:00 UTC), $10 кредитов → 1000/день |
+| 3 | **Groq / Gemini / Mistral / NVIDIA NIM** | своими ключами (`GROQ_API_KEY`, `GEMINI_API_KEY`, `MISTRAL_API_KEY`, `NVIDIA_API_KEY`) | щедрые бесплатные тиры из списка awesome-free-models |
+| 4 | **Anthropic** | `ANTHROPIC_API_KEY` | платный, opt-in |
+
+Устойчивость цепочки: любая ошибка звена (401/402/403/404/429/5xx, таймаут, сеть) —
+переход к следующей модели; на 429 с далёким `x-ratelimit-reset` провайдер уходит
+в cooldown до сброса квоты; если мертвы все — запуск мягко падает на детерминированное
+ядро (продукт никогда не ломается). Модель, которая фактически выполнила запуск,
+приходит в SSE-событии `model` и отображается чипом «⚡ provider/model» в воркспейсе.
+
 ## Блог
 
 `/blog` и `/blog/:slug` — данные в `src/data/blog.ts` (4 записи, EN/RU, секции, цитата,

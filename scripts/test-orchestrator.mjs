@@ -1,7 +1,8 @@
 /**
  * Orchestrator tests with scripted OpenAI-compatible mock providers.
- * Proves: provider chain skipping (402 → next), anonymous OpenCode-Zen-style
- * provider (no auth header sent, live /models discovery), real tool side
+ * Proves: provider chain skipping (401/402/429 → next), anonymous
+ * OpenCode-Zen-style provider (no auth header sent, live /models discovery),
+ * daily-quota cooldowns, real tool side
  * effects (vm code exec, pptx/srt binaries, cookie-jar HTTP), SSRF guard and
  * the RSB_PROVIDERS=none deterministic fallback.
  */
@@ -59,6 +60,17 @@ function llmMockServer(port, { models, recordAuth } = {}) {
         res.setHeader('content-type', 'application/json')
         return res.end(JSON.stringify({ error: { message: 'This request requires more credits' } }))
       }
+      if (payload.model === 'dead-key-model') {
+        res.statusCode = 401
+        res.setHeader('content-type', 'application/json')
+        return res.end(JSON.stringify({ error: { message: 'User not found.', code: 401 } }))
+      }
+      if (payload.model === 'quota-model') {
+        res.statusCode = 429
+        res.setHeader('content-type', 'application/json')
+        res.setHeader('x-ratelimit-reset', String(Date.now() + 3600 * 1000))
+        return res.end(JSON.stringify({ error: { message: 'Rate limit exceeded: free-models-per-day', code: 429 } }))
+      }
       const move = nextMove(payload.messages ?? [])
       res.setHeader('content-type', 'application/json')
       res.end(JSON.stringify({ choices: [{ message: { role: 'assistant', content: move.content, tool_calls: move.tool_calls } }] }))
@@ -89,15 +101,23 @@ const collect = async (prompt, locale) => {
   return { events, model }
 }
 
-/* --- A: openrouter chain skips the 402 model ------------------------- */
+/* --- A0: default provider set ---------------------------------------- */
 process.env.OPENAI_API_KEY = 'test-key'
 process.env.OPENAI_BASE_URL = 'http://127.0.0.1:8798/v1'
 process.env.OPENAI_MODEL = ''
-process.env.RSB_PROVIDERS = 'openrouter'
-process.env.RSB_LLM_MODEL_CHAIN = 'broken-model, mock-model'
+delete process.env.RSB_PROVIDERS
+delete process.env.OPENCODE_API_KEY
 
 const { engineInfo } = await import('../server/engine.mjs')
 check(engineInfo().engine === 'llm', 'engine selects LLM when providers enabled → ' + JSON.stringify(engineInfo()))
+check(JSON.stringify(engineInfo().providers) === '["openrouter"]', 'anonymous zen stays out of the default chain (Oct 2026 policy) → ' + JSON.stringify(engineInfo().providers))
+process.env.OPENCODE_API_KEY = 'zen-key'
+check(JSON.stringify(engineInfo().providers) === '["opencode-zen","openrouter"]', 'zen joins the default chain only with OPENCODE_API_KEY → ' + JSON.stringify(engineInfo().providers))
+delete process.env.OPENCODE_API_KEY
+
+/* --- A: openrouter chain skips dead-key (401) and 402 models ---------- */
+process.env.RSB_PROVIDERS = 'openrouter'
+process.env.RSB_LLM_MODEL_CHAIN = 'dead-key-model, broken-model, mock-model'
 
 const { events, model } = await collect('Build a small page and a report', 'en')
 const types = events.map((e) => e.type)
@@ -106,7 +126,7 @@ const consoleLines = events.filter((e) => e.type === 'console').map((e) => e.lin
 const files = events.filter((e) => e.type === 'file').map((e) => e.file.path)
 const artifact = events.find((e) => e.type === 'artifact')?.artifact
 
-check(model === 'openrouter/mock-model', 'chain skips the 402 model and continues on the next → ' + model)
+check(model === 'openrouter/mock-model', 'chain skips the 401 and 402 models and continues on the next → ' + model)
 check(types[0] === 'run_start' && types.at(-1) === 'done', 'run_start … done sequence (' + events.length + ' events)')
 check(plan?.steps?.length === 2, 'plan streamed from the mock LLM (2 steps)')
 check(consoleLines.some((l) => l.includes('2+2= 4')) && consoleLines.some((l) => l.includes('sum= 240')), 'run_code really executed in the vm sandbox → ' + JSON.stringify(consoleLines.slice(0, 3)))
@@ -140,12 +160,25 @@ check((await executeWebFetch({ url: 'file:///etc/passwd' })).ok === false, 'web_
 const threw = executeCode({ code: 'throw new Error("boom")' })
 check(threw.ok === false && threw.text.includes('boom'), 'run_code surfaces sandbox errors')
 
-/* --- D: deterministic fallback --------------------------------------- */
+/* --- D: daily-quota cooldown ------------------------------------------ */
+const { providerEntries, __resetProviderCooldowns } = await import('../server/orchestrator.mjs')
+process.env.RSB_PROVIDERS = 'openrouter'
+process.env.RSB_LLM_MODEL_CHAIN = 'quota-model, mock-model'
+const cooled = await collect('One more welcome screen', 'en')
+check(cooled.model === 'openrouter/mock-model', '429 quota model skipped, run continues on the next → ' + cooled.model)
+let entriesNow = await providerEntries()
+check(entriesNow.length === 0, 'provider cooled down after account-level daily 429 → entries=' + entriesNow.length)
+__resetProviderCooldowns()
+entriesNow = await providerEntries()
+check(entriesNow.length === 2, 'cooldown reset restores the chain → entries=' + entriesNow.length)
+
+/* --- E: deterministic fallback ---------------------------------------- */
 process.env.RSB_PROVIDERS = 'none'
 check(engineInfo().engine === 'deterministic', 'RSB_PROVIDERS=none → deterministic engine')
 
 openRouterMock.server.close()
 zenMock.server.close()
 site.close()
+
 console.log(ok ? '\nORCHESTRATOR OK' : '\nORCHESTRATOR FAILED')
 process.exit(ok ? 0 : 1)

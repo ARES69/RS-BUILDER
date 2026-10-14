@@ -243,11 +243,16 @@ function serializeAnthropic(turns) {
 /*                                                                     */
 /* Sources of free inference, in default priority order:               */
 /*  1. opencode-zen  — https://opencode.ai/zen/v1, OpenAI-compatible,  */
-/*     accepts ANONYMOUS calls (shared free quota), catalog discovered */
-/*     live from /models (pattern from keman-ai/dsh-opencode-zen);     */
-/*     OPENCODE_API_KEY optional for a private quota.                  */
+/*     catalog discovered live from /models (pattern from              */
+/*     keman-ai/dsh-opencode-zen). NOTE: since Oct 2026 OpenCode       */
+/*     rejects ANONYMOUS chat completions with 403 FreeTierError       */
+/*     ("free tier can only be used from within OpenCode"), so zen is  */
+/*     enabled only when OPENCODE_API_KEY is set — or when explicitly  */
+/*     forced via RSB_PROVIDERS (the /models catalog stays public).    */
 /*  2. openrouter    — $0 tool-capable models discovered via /models   */
-/*     (or RSB_LLM_MODEL_CHAIN / OPENAI_MODEL override).               */
+/*     (or RSB_LLM_MODEL_CHAIN / OPENAI_MODEL override). Free accounts */
+/*     get 50 requests/day across all :free models (resets 00:00 UTC); */
+/*     $10 of credits lifts it to 1000/day.                            */
 /*  3. groq / gemini / mistral / nim — free tiers from the curated     */
 /*     awesome-free-models list; enabled only when their key is set.   */
 /*  4. anthropic     — paid, opt-in via ANTHROPIC_API_KEY.              */
@@ -255,25 +260,35 @@ function serializeAnthropic(turns) {
 /* the LLM path entirely (deterministic engine).                       */
 /* ------------------------------------------------------------------ */
 
+/** Fallback chain when OpenRouter /models discovery is unreachable (live catalog 2026-10-14). */
 const OR_STATIC = [
+  'thinkingmachines/inkling-small:free',
+  'thinkingmachines/inkling:free',
   'nvidia/nemotron-3.5-lightning:free',
   'nvidia/nemotron-3-ultra-550b-a55b:free',
-  'google/gemma-4-31b-it:free',
+  'dots-studio/dots-3-note-preview:free',
   'poolside/laguna-s-2.1:free',
-  'meta-llama/llama-3.3-70b-instruct:free',
+  'google/gemma-4-26b-a4b-it:free',
   'qwen/qwen3-32b:free',
-  'deepseek/deepseek-chat-v3-0324:free',
 ]
 
-/** Snapshot from keman-ai/dsh-opencode-zen (all seven take tool calls). */
+/**
+ * Fallback when Zen /models discovery is unreachable (live catalog 2026-10-14;
+ * the original keman-ai/dsh-opencode-zen seven are mostly retired — the live
+ * endpoint stays the source of truth, this list only covers outages).
+ */
 const ZEN_SNAPSHOT = [
-  'nemotron-3-ultra-free',
-  'nemotron-3.5-lightning-free',
-  'laguna-s-2.1-free',
-  'deepseek-v4-flash-free',
   'big-pickle',
-  'mimo-v2.5-free',
-  'hy3-free',
+  'nemotron-3.5-lightning-free',
+  'ling-3.1-flash-free',
+  'mimo-v2.6-flash-free',
+  'longcat-2.5-preview-free',
+  'step-5-preview-free',
+  'cat-jam-free',
+  'muse-spark-1.3-contributor-free',
+  'jev-1.13-free',
+  'space-bunny-free',
+  'muse-spark-1.2-contributor-free',
 ]
 
 /** Free-tier model chains per awesome-free-models provider. */
@@ -310,11 +325,40 @@ export function enabledProviderIds() {
   const override = (process.env.RSB_PROVIDERS || '').trim()
   if (override === 'none') return []
   if (override) return override.split(',').map((x) => x.trim()).filter(Boolean)
-  const ids = ['opencode-zen']
+  const ids = []
+  // Anonymous zen calls are policy-blocked since Oct 2026 (403 FreeTierError),
+  // so the provider only makes the default chain when a key is present.
+  if (process.env.OPENCODE_API_KEY) ids.push('opencode-zen')
   if (process.env.OPENAI_API_KEY) ids.push('openrouter')
   for (const id of Object.keys(KEYED_PROVIDERS)) if (process.env[KEYED_PROVIDERS[id].key]) ids.push(id)
   if (process.env.ANTHROPIC_API_KEY) ids.push('anthropic')
   return ids
+}
+
+/* ------------------------------------------------------------------ */
+/* Daily-quota cooldowns                                               */
+/*                                                                     */
+/* When a provider answers 429 with a far-future x-ratelimit-reset     */
+/* (OpenRouter's free tier is 50 req/day per ACCOUNT, so one 429 means */
+/* every model of that provider is dead until reset), stop offering    */
+/* its entries until then instead of burning a round trip per model    */
+/* per turn. Warm-lambda memory makes this persist across requests.    */
+/* ------------------------------------------------------------------ */
+
+const providerCooldownUntil = new Map()
+
+export function __resetProviderCooldowns() {
+  providerCooldownUntil.clear()
+}
+
+function noteRateLimit(entry, response) {
+  if (response.status !== 429) return
+  const reset = Number(response.headers.get('x-ratelimit-reset') || 0)
+  if (reset > Date.now() + 60_000) {
+    const until = Math.min(reset, Date.now() + 24 * 60 * 60 * 1000)
+    const prev = providerCooldownUntil.get(entry.id) ?? 0
+    if (until > prev) providerCooldownUntil.set(entry.id, until)
+  }
 }
 
 export const llmConfigured = () => enabledProviderIds().length > 0
@@ -383,8 +427,11 @@ async function openRouterModels(signal) {
 export async function providerEntries(signal) {
   const entries = []
   const envChain = (process.env.RSB_LLM_MODEL_CHAIN || '').split(',').map((x) => x.trim()).filter(Boolean)
+  const now = Date.now()
+  for (const [id, until] of providerCooldownUntil) if (until <= now) providerCooldownUntil.delete(id)
 
   for (const id of enabledProviderIds()) {
+    if ((providerCooldownUntil.get(id) ?? 0) > now) continue
     if (id === 'opencode-zen') {
       const models = (process.env.RSB_ZEN_MODELS || '').trim()
         ? process.env.RSB_ZEN_MODELS.split(',').map((x) => x.trim())
@@ -441,6 +488,7 @@ async function chatOnce(entry, system, turns, signal) {
       })
       if (!response.ok) {
         const detail = (await response.text()).slice(0, 200)
+        noteRateLimit(entry, response)
         throw new Error(response.status === 402 ? 'insufficient credits (HTTP 402): ' + detail : 'LLM ' + response.status + ': ' + detail)
       }
       const data = await response.json()
@@ -469,6 +517,7 @@ async function chatOnce(entry, system, turns, signal) {
     })
     if (!response.ok) {
       const detail = (await response.text()).slice(0, 200)
+      noteRateLimit(entry, response)
       if (response.status === 402) throw new Error('insufficient credits (HTTP 402): ' + detail)
       throw new Error('LLM ' + response.status + ': ' + detail)
     }
@@ -488,18 +537,24 @@ async function chatOnce(entry, system, turns, signal) {
   }
 }
 
-/** Walks the provider×model chain, skipping dead/rate-limited/price-gated entries. */
+/**
+ * Walks the provider×model chain. ANY failure of a single entry (dead key 401,
+ * policy block 403, exhausted quota 429, missing model 404, provider 5xx,
+ * network timeout) skips to the next entry — one dead provider must never kill
+ * the run while other entries are still untried. Only an aborted signal or a
+ * fully exhausted chain throws (engine.mjs then falls back deterministically).
+ */
 async function chat(entries, system, turns, signal) {
   let lastError = null
   for (const entry of entries) {
+    if (signal?.aborted) throw new Error('run aborted')
     try {
       const result = await chatOnce(entry, system, turns, signal)
       result.model = entry.id + '/' + entry.model
       return result
     } catch (error) {
+      if (signal?.aborted) throw error
       lastError = error
-      const retryable = /402|403|404|429|500|503|model|credits|rate|harness|agentic|quota/i.test(String(error.message ?? ''))
-      if (!retryable || entry === entries[entries.length - 1]) throw error
     }
   }
   throw lastError ?? new Error('no models available')
