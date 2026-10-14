@@ -83,8 +83,12 @@ export async function getJob(id) {
   if (blobToken()) {
     const { get } = await blob()
     try {
-      const res = await get(prefix + id, await blobReadOptions())
-      if (!res) return null
+      // get() resolves to blob metadata; private stores expose the bytes via
+      // the presigned downloadUrl.
+      const meta = await get(prefix + id, await blobReadOptions())
+      if (!meta?.downloadUrl) return null
+      const res = await fetch(meta.downloadUrl)
+      if (!res.ok) return null
       return JSON.parse(await res.text())
     } catch {
       return null
