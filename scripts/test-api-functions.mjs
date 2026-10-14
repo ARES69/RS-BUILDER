@@ -6,6 +6,7 @@
 import { EventEmitter } from 'node:events'
 import handler from '../api/v1/runs.mjs'
 import healthHandler from '../api/v1/health.mjs'
+import statusHandler from '../api/v1/status.mjs'
 
 function mockRes() {
   const res = new EventEmitter()
@@ -66,6 +67,19 @@ const report = (good, msg) => { console.log((good ? 'PASS  ' : 'FAIL  ') + msg);
     types.includes('plan') && types.includes('artifact') &&
     events.find((e) => e.type === 'thought')?.text?.ru?.length > 0
   report(good, 'POST /api/v1/runs → ' + events.length + ' SSE events, ru locale, artifact=' + (events.find((e) => e.type === 'artifact')?.artifact?.kind))
+}
+
+// status
+{
+  const res = mockRes()
+  const req = mockReq('GET')
+  req.headers['x-rsb-keys'] = JSON.stringify({ groq: 'gsk-test' })
+  statusHandler(req, res)
+  const json = JSON.parse(res.chunks.join(''))
+  report(
+    res.statusCode === 200 && json.ok === true && json.runtimeKeys.join(',') === 'groq' && json.engine === 'llm' && json.providers.join(',') === 'groq' && 'cooldowns' in json && 'catalogs' in json,
+    'GET /api/v1/status echoes runtime keys and exposes cooldowns/catalogs → ' + JSON.stringify(json).slice(0, 160),
+  )
 }
 
 // wrong method

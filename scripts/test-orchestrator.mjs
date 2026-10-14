@@ -115,6 +115,17 @@ process.env.OPENCODE_API_KEY = 'zen-key'
 check(JSON.stringify(engineInfo().providers) === '["opencode-zen","openrouter"]', 'zen joins the default chain only with OPENCODE_API_KEY → ' + JSON.stringify(engineInfo().providers))
 delete process.env.OPENCODE_API_KEY
 
+/* --- A0b: per-request runtime keys (bring your own key) --------------- */
+delete process.env.OPENAI_API_KEY
+delete process.env.RSB_PROVIDERS
+check(JSON.stringify(engineInfo().providers) === '[]' || engineInfo().engine === 'deterministic', 'no env keys → deterministic engine → ' + JSON.stringify(engineInfo()))
+check(JSON.stringify(engineInfo({ groq: 'gsk-test' }).providers) === '["groq"]', 'runtime key enables a provider without any env → ' + JSON.stringify(engineInfo({ groq: 'gsk-test' }).providers))
+const rtEntries = await (await import('../server/orchestrator.mjs')).providerEntries(null, { groq: 'gsk-test' })
+check(rtEntries.length === 4 && rtEntries.every((e) => e.key === 'gsk-test'), 'runtime key flows into the provider chain → ' + rtEntries.length + ' groq models')
+check((await import('../server/orchestrator.mjs')).parseRuntimeKeys('{"openrouter":"sk-x","junk":1,"groq":7}') !== null, 'parseRuntimeKeys accepts a mixed header and drops junk')
+check((await import('../server/orchestrator.mjs')).parseRuntimeKeys('not-json') === null, 'parseRuntimeKeys rejects garbage')
+process.env.OPENAI_API_KEY = 'test-key'
+
 /* --- A: openrouter chain skips dead-key (401) and 402 models ---------- */
 process.env.RSB_PROVIDERS = 'openrouter'
 process.env.RSB_LLM_MODEL_CHAIN = 'dead-key-model, broken-model, mock-model'

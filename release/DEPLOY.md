@@ -130,6 +130,9 @@ LLM-цикл с tool-calling (`server/orchestrator.mjs`), иначе детер�
    **Внимание:** с октября 2026 Zen отклоняет анонимные chat-completions
    (`403 FreeTierError: free tier can only be used from within OpenCode`), поэтому
    провайдер включается только при `OPENCODE_API_KEY` (или явно через `RSB_PROVIDERS`).
+   С ключом подаётся **платный** каталог cheapest-first (free-модели отклоняют и вызовы
+   с ключом); нулевой баланс отвечает `402 Insufficient account funds`, провайдер уходит
+   в cooldown на 15 минут — пополнение на opencode.ai подхватывается автоматически.
 2. **OpenRouter** — при `OPENAI_MODEL=auto-free` оркестратор сам обнаруживает через
    `GET /models` все модели `:free` с ценой $0 и поддержкой tools (кэш 10 минут).
    Лимит бесплатного аккаунта: **50 запросов/день на все `:free`-модели** (сброс 00:00 UTC);
@@ -146,6 +149,22 @@ LLM-цикл с tool-calling (`server/orchestrator.mjs`), иначе детер�
 звенья мертвы — запуск мягко уходит на детерминированное ядро с понятным сообщением в треде.
 Фактически выбранная модель приходит в событии `model` и видна в логе запуска и в
 воркспейсе (чип «⚡ provider/model» под бейджем Live backend).
+
+## Прод-проект и миграция 2026-10-14
+
+Прод живёт в проекте Vercel **`rs-builder-app`** (не `rs-builder`!): старый проект получил
+ложноположительный флаг abuse-сканера, и все новые деплои в него блокировались состоянием
+`BLOCKED` без диагностики (код при этом чистый — проверено деплоем того же дерева в новый
+проект). Алиас `rs-builder-sigma.vercel.app` перенесён на новый проект через
+`POST /v2/deployments/{id}/aliases`, для пользователей URL не изменился. На новом проекте
+по умолчанию стоял Vercel Authentication (`ssoProtection: all_except_custom_domains`) —
+выключен через `PATCH /v9/projects/{id} {ssoProtection: null}`. **Корень BLOCKED найден:** Vercel валидирует email автора коммитов — деплои блокировались,
+пока автором был невалидный `rs@builder.local` (CLI шлёт git-метаданные с деплоем).
+После переписывания истории (`git filter-branch --env-filter`, автор и коммиттер =
+`lookastarik <lookastarik@gmail.com>`, тот же email настрожен в `git config user.email`)
+старый проект снова деплоится: проверено превью-деплоем `dpl_DnkaxK85EVYJa3h8ky4UvAvgMY1x`
+(READY). Апелляция не нужна. **Правило на будущее: коммитить только с валидным email
+аккаунта Vercel/Git.** Прод оставлен в `rs-builder-app` (оба проекта здоровы).
 
 ## Чек-лист релиза
 

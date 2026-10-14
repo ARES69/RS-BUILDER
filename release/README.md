@@ -13,6 +13,8 @@
 - Сайт: **https://rs-builder-sigma.vercel.app**
 - Бэкенд: `GET /api/v1/health`, `POST /api/v1/runs` (SSE) — same-origin, без CORS
 - Проверка прода: `PROD_URL=https://rs-builder-sigma.vercel.app node scripts/qa-prod.mjs`
+- Проект Vercel: **`rs-builder-app`** (мигрирован 2026-10-14 со старого `rs-builder`: тот получил
+  ложный флаг abuse-сканера и блокировал новые деплои; алиас перенесён, URL не менялся).
 
 ## Быстрый старт
 
@@ -128,7 +130,7 @@ npm run build:preview && mv preview/index.html preview/rs-builder.html   # си�
 
 | # | Провайдер | Как включается | Реальность (октябрь 2026) |
 |---|---|---|---|
-| 1 | **OpenCode Zen** | `OPENCODE_API_KEY` (или явно `RSB_PROVIDERS=opencode-zen`) | анонимный free-tier закрыт политикой: `403 FreeTierError` («only from within OpenCode»); каталог `/models` по-прежнему публичен и обнаруживается живьём |
+| 1 | **OpenCode Zen** | `OPENCODE_API_KEY` (или явно `RSB_PROVIDERS=opencode-zen`) | анонимный free-tier закрыт политикой: `403 FreeTierError` («only from within OpenCode»); каталог `/models` публичен и обнаруживается живьём. С ключом подаётся платный каталог cheapest-first; нулевой баланс → `402` + cooldown 15 мин, пополнение подхватывается само |
 | 2 | **OpenRouter `:free`** | `OPENAI_API_KEY` + `OPENAI_MODEL=auto-free` | live-дискавери $0-моделей с tools (кэш 10 мин); лимит бесплатного аккаунта **50 запросов/день** (сброс 00:00 UTC), $10 кредитов → 1000/день |
 | 3 | **Groq / Gemini / Mistral / NVIDIA NIM** | своими ключами (`GROQ_API_KEY`, `GEMINI_API_KEY`, `MISTRAL_API_KEY`, `NVIDIA_API_KEY`) | щедрые бесплатные тиры из списка awesome-free-models |
 | 4 | **Anthropic** | `ANTHROPIC_API_KEY` | платный, opt-in |

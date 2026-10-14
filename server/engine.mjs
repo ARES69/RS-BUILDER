@@ -4,12 +4,12 @@
  * so transports (standalone server, Vercel functions) never care which runs.
  */
 import { runEvents as deterministic, VERSION } from './core.mjs'
-import { runOrchestrated, llmConfigured, engineInfo } from './orchestrator.mjs'
+import { runOrchestrated, llmConfigured, engineInfo, runtimeStatus } from './orchestrator.mjs'
 
-export async function* runEvents(prompt, locale, signal) {
-  if (llmConfigured()) {
+export async function* runEvents(prompt, locale, signal, runtime) {
+  if (llmConfigured(runtime)) {
     try {
-      yield* runOrchestrated(prompt, locale, signal)
+      yield* runOrchestrated(prompt, locale, signal, runtime)
       return
     } catch (error) {
       if (signal?.aborted) return
@@ -26,4 +26,4 @@ export async function* runEvents(prompt, locale, signal) {
   yield* deterministic(prompt, locale, signal)
 }
 
-export { VERSION, engineInfo, llmConfigured }
+export { VERSION, engineInfo, llmConfigured, runtimeStatus }

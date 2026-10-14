@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { initialRunState, type AgentEvent, type RunState, type Scenario } from './agent'
 import { runScenario } from './agentEngine'
-import { remoteEnabled, runRemote } from './remoteAgent'
+import { demoForced, remoteEnabled, runRemote } from './remoteAgent'
 import { useI18n } from '@/i18n'
 
 function reduce(state: RunState, event: AgentEvent): RunState {
@@ -84,7 +84,8 @@ export function useAgentRun() {
       setActiveScenario(scenario)
       setState({ ...initialRunState, status: 'running' })
 
-      const events = remoteEnabled()
+      const live = remoteEnabled() && !demoForced()
+      const events = live
         ? runRemote(scenario.prompt[locale] ?? scenario.prompt.en, locale, next.signal)
         : runScenario(scenario, { getSpeed: () => speedRef.current, signal: next.signal })
 

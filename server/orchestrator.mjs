@@ -318,23 +318,59 @@ const KEYED_PROVIDERS = {
   },
 }
 
+/* ------------------------------------------------------------------ */
+/* Runtime (per-request) keys                                          */
+/*                                                                     */
+/* The workspace settings panel lets an operator paste their own       */
+/* provider keys; the client sends them per request in the             */
+/* `x-rsb-keys` header (never stored server-side). Runtime keys win    */
+/* over env so "bring your own key" works without redeploying.         */
+/* ------------------------------------------------------------------ */
+
+export const RUNTIME_KEY_IDS = ['opencode-zen', 'openrouter', 'groq', 'gemini', 'mistral', 'nim']
+
+export function parseRuntimeKeys(raw) {
+  if (!raw) return null
+  try {
+    const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw
+    if (!parsed || typeof parsed !== 'object') return null
+    const out = {}
+    for (const id of RUNTIME_KEY_IDS) {
+      const v = parsed[id]
+      if (typeof v === 'string' && v.trim() && v.length <= 300) out[id] = v.trim()
+    }
+    return Object.keys(out).length ? out : null
+  } catch {
+    return null
+  }
+}
+
+function keyFor(id, runtime) {
+  if (runtime && runtime[id]) return runtime[id]
+  if (id === 'openrouter') return process.env.OPENAI_API_KEY || null
+  if (id === 'opencode-zen') return process.env.OPENCODE_API_KEY || null
+  if (id === 'anthropic') return process.env.ANTHROPIC_API_KEY || null
+  return KEYED_PROVIDERS[id] ? process.env[KEYED_PROVIDERS[id].key] || null : null
+}
+
 const zenBase = () => (process.env.RSB_ZEN_BASE_URL || 'https://opencode.ai/zen/v1').replace(/\/$/, '')
 const orBase = () => (process.env.OPENAI_BASE_URL || 'https://api.openrouter.ai/v1').replace(/\/$/, '')
 
 let zenCache = { anon: { at: 0, models: null }, keyed: { at: 0, models: null } }
 let orCache = { at: 0, models: null }
 
-export function enabledProviderIds() {
+export function enabledProviderIds(runtime) {
   const override = (process.env.RSB_PROVIDERS || '').trim()
   if (override === 'none') return []
   if (override) return override.split(',').map((x) => x.trim()).filter(Boolean)
   const ids = []
   // Anonymous zen calls are policy-blocked since Oct 2026 (403 FreeTierError),
-  // so the provider only makes the default chain when a key is present.
-  if (process.env.OPENCODE_API_KEY) ids.push('opencode-zen')
-  if (process.env.OPENAI_API_KEY) ids.push('openrouter')
-  for (const id of Object.keys(KEYED_PROVIDERS)) if (process.env[KEYED_PROVIDERS[id].key]) ids.push(id)
-  if (process.env.ANTHROPIC_API_KEY) ids.push('anthropic')
+  // so the provider only makes the default chain when a key is present
+  // (env or per-request runtime key from the workspace settings).
+  if (keyFor('opencode-zen', runtime)) ids.push('opencode-zen')
+  if (keyFor('openrouter', runtime)) ids.push('openrouter')
+  for (const id of Object.keys(KEYED_PROVIDERS)) if (keyFor(id, runtime)) ids.push(id)
+  if (keyFor('anthropic', runtime)) ids.push('anthropic')
   return ids
 }
 
@@ -378,10 +414,10 @@ function noteRateLimit(entry, response) {
   }
 }
 
-export const llmConfigured = () => enabledProviderIds().length > 0
+export const llmConfigured = (runtime) => enabledProviderIds(runtime).length > 0
 
-export function engineInfo() {
-  const ids = enabledProviderIds()
+export function engineInfo(runtime) {
+  const ids = enabledProviderIds(runtime)
   if (!ids.length) return { engine: 'deterministic', provider: null, model: null }
   const pinned = process.env.OPENAI_MODEL && process.env.OPENAI_MODEL !== 'auto-free' ? process.env.OPENAI_MODEL : null
   return { engine: 'llm', providers: ids, model: pinned ?? 'auto (free discovery, $0)' }
@@ -423,13 +459,13 @@ const ZEN_CHEAP_FIRST = [
  * that is what a key buys, since free models reject keyed calls too — ordered
  * cheapest-first so a small balance lasts.
  */
-async function zenModels(signal) {
-  const keyed = Boolean(process.env.OPENCODE_API_KEY)
+async function zenModels(signal, runtime) {
+  const keyed = Boolean(keyFor('opencode-zen', runtime))
   const cache = keyed ? zenCache.keyed : zenCache.anon
   if (cache.models && Date.now() - cache.at < 60 * 60 * 1000) return cache.models
   let models = keyed ? ZEN_CHEAP_FIRST : ZEN_SNAPSHOT
   try {
-    const headers = keyed ? { authorization: 'Bearer ' + process.env.OPENCODE_API_KEY } : {}
+    const headers = keyed ? { authorization: 'Bearer ' + keyFor('opencode-zen', runtime) } : {}
     const data = await fetchJson(zenBase() + '/models', headers, signal)
     const ids = (data.data ?? []).map((m) => m.id).filter(Boolean)
     if (keyed) {
@@ -473,32 +509,32 @@ async function openRouterModels(signal) {
 }
 
 /** Flat, ordered list of {provider, baseUrl, key, model, wire} attempts. */
-export async function providerEntries(signal) {
+export async function providerEntries(signal, runtime) {
   const entries = []
   const envChain = (process.env.RSB_LLM_MODEL_CHAIN || '').split(',').map((x) => x.trim()).filter(Boolean)
   const now = Date.now()
   for (const [id, until] of providerCooldownUntil) if (until <= now) providerCooldownUntil.delete(id)
 
-  for (const id of enabledProviderIds()) {
+  for (const id of enabledProviderIds(runtime)) {
     if ((providerCooldownUntil.get(id) ?? 0) > now) continue
     if (id === 'opencode-zen') {
       const models = (process.env.RSB_ZEN_MODELS || '').trim()
         ? process.env.RSB_ZEN_MODELS.split(',').map((x) => x.trim())
-        : await zenModels(signal)
+        : await zenModels(signal, runtime)
       for (const model of models.slice(0, 7)) {
-        entries.push({ id, baseUrl: zenBase(), key: process.env.OPENCODE_API_KEY || null, model })
+        entries.push({ id, baseUrl: zenBase(), key: keyFor(id, runtime), model })
       }
     } else if (id === 'openrouter') {
       const pinned = process.env.OPENAI_MODEL && process.env.OPENAI_MODEL !== 'auto-free' ? [process.env.OPENAI_MODEL] : null
       const models = envChain.length ? envChain : pinned ?? (await openRouterModels(signal))
       for (const model of models.slice(0, 8)) {
-        entries.push({ id, baseUrl: orBase(), key: process.env.OPENAI_API_KEY, model })
+        entries.push({ id, baseUrl: orBase(), key: keyFor(id, runtime), model })
       }
     } else if (id === 'anthropic') {
       entries.push({
         id,
         baseUrl: (process.env.ANTHROPIC_BASE_URL || 'https://api.anthropic.com').replace(/\/$/, ''),
-        key: process.env.ANTHROPIC_API_KEY,
+        key: keyFor(id, runtime),
         model: process.env.ANTHROPIC_MODEL || 'claude-sonnet-4-5',
         wire: 'anthropic',
       })
@@ -507,11 +543,25 @@ export async function providerEntries(signal) {
       for (const model of (process.env['RSB_' + id.toUpperCase() + '_MODELS'] || '').split(',').map((x) => x.trim()).filter(Boolean).length
         ? process.env['RSB_' + id.toUpperCase() + '_MODELS'].split(',').map((x) => x.trim())
         : spec.models) {
-        entries.push({ id, baseUrl: spec.base, key: process.env[spec.key], model })
+        entries.push({ id, baseUrl: spec.base, key: keyFor(id, runtime), model })
       }
     }
   }
   return entries
+}
+
+/** Snapshot for GET /v1/status: cooldowns and cached catalogs (no secrets). */
+export function runtimeStatus() {
+  const now = Date.now()
+  const cooldowns = {}
+  for (const [id, until] of providerCooldownUntil) if (until > now) cooldowns[id] = until
+  return {
+    cooldowns,
+    catalogs: {
+      'opencode-zen': (zenCache.keyed.models ?? zenCache.anon.models) || null,
+      openrouter: orCache.models || null,
+    },
+  }
 }
 
 async function chatOnce(entry, system, turns, signal) {
@@ -736,8 +786,8 @@ function systemPrompt(locale) {
 /* The orchestrated run                                                */
 /* ------------------------------------------------------------------ */
 
-export async function* runOrchestrated(prompt, locale, signal) {
-  const entries = await providerEntries(signal)
+export async function* runOrchestrated(prompt, locale, signal, runtime) {
+  const entries = await providerEntries(signal, runtime)
   if (!entries.length) throw new Error('no LLM provider configured')
 
   const files = new Map()

@@ -8,6 +8,7 @@
  * (client appends /v1/runs), so no CORS configuration is required in production.
  */
 import { runEvents } from '../../server/engine.mjs'
+import { parseRuntimeKeys } from '../../server/orchestrator.mjs'
 
 export const config = {
   runtime: 'nodejs',
@@ -17,7 +18,7 @@ export const config = {
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*')
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS')
-  res.setHeader('Access-Control-Allow-Headers', 'content-type')
+  res.setHeader('Access-Control-Allow-Headers', 'content-type, x-rsb-keys')
 
   if (req.method === 'OPTIONS') {
     res.status(204).end()
@@ -60,7 +61,8 @@ export default async function handler(req, res) {
   res.on('error', () => abort.abort())
 
   try {
-    for await (const event of runEvents(payload.prompt, payload.locale, abort.signal)) {
+    const runtime = parseRuntimeKeys(req.headers['x-rsb-keys'])
+    for await (const event of runEvents(payload.prompt, payload.locale, abort.signal, runtime)) {
       if (abort.signal.aborted) break
       res.write('data: ' + JSON.stringify(event) + '\n\n')
     }

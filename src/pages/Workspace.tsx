@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
-import { ArrowLeft, Coins, Gauge, Plus, RotateCcw, Sparkles } from 'lucide-react'
+import { ArrowLeft, Coins, Gauge, Plus, RotateCcw, Settings, Sparkles } from 'lucide-react'
 import { useI18n } from '@/i18n'
 import { scenarios, scenarioFor } from '@/data/scenarios'
 import type { Scenario } from '@/lib/agent'
@@ -12,7 +12,8 @@ import { Composer } from '@/components/home/Composer'
 import { Thread } from '@/components/workspace/Thread'
 import { RunPanel } from '@/components/workspace/RunPanel'
 import { ThemeToggle } from '@/components/layout/ThemeToggle'
-import { AGENT_API_URL, remoteEnabled } from '@/lib/remoteAgent'
+import { AGENT_API_URL, demoForced, fetchBackendStatus, remoteEnabled, type BackendStatus } from '@/lib/remoteAgent'
+import { SettingsPanel } from '@/components/workspace/SettingsPanel'
 import { LanguageSwitcher } from '@/components/layout/LanguageSwitcher'
 
 /** Maps showcase / feature slugs onto a scripted scenario id. */
@@ -37,6 +38,34 @@ const SPEEDS = [0.5, 1, 2, 4]
 
 export default function Workspace() {
   const { t, l } = useI18n()
+  const [settingsOpen, setSettingsOpen] = useState(false)
+  const [backend, setBackend] = useState<BackendStatus | null>(null)
+
+  useEffect(() => {
+    if (!remoteEnabled()) return
+    let alive = true
+    fetchBackendStatus().then((status) => alive && setBackend(status))
+    return () => {
+      alive = false
+    }
+  }, [])
+  useEffect(() => {
+    if (settingsOpen || !remoteEnabled()) return
+    let alive = true
+    fetchBackendStatus().then((status) => alive && setBackend(status))
+    return () => {
+      alive = false
+    }
+  }, [settingsOpen])
+
+  const cooldownNow = (until?: number) => Boolean(until && until > Date.now())
+  const showFallbackBanner =
+    remoteEnabled() &&
+    !demoForced() &&
+    backend !== null &&
+    (backend.engine === 'deterministic' ||
+      Boolean(backend.providers?.length) === false ||
+      (backend.providers ?? []).every((id) => cooldownNow(backend?.cooldowns?.[id])))
   const [params] = useSearchParams()
   const { state, start, stop, reset, speed, setSpeed, activeScenario } = useAgentRun()
   const [tab, setTab] = useState<'plan' | 'preview' | 'browser' | 'files' | 'console'>('plan')
@@ -150,6 +179,15 @@ export default function Workspace() {
             </button>
           ) : null}
 
+          <button
+            type="button"
+            onClick={() => setSettingsOpen(true)}
+            aria-label={t('app.openSettings')}
+            title={t('app.openSettings')}
+            className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-line text-muted transition-colors hover:border-accent/40 hover:text-accent"
+          >
+            <Settings size={14} />
+          </button>
           <LanguageSwitcher compact />
           <ThemeToggle className="h-8 w-8" />
           <Link
@@ -232,6 +270,18 @@ export default function Workspace() {
 
         {/* Center: thread + composer */}
         <main className={cn('flex min-w-0 flex-1 flex-col', mobileView !== 'chat' && 'hidden lg:flex')}>
+          {showFallbackBanner && (
+            <div className="flex items-center gap-3 border-b border-line bg-amber-400/10 px-4 py-2 text-[11.5px] leading-snug text-amber-600 dark:text-amber-300">
+              <span className="min-w-0 flex-1">{t('app.fallbackBanner')}</span>
+              <button
+                type="button"
+                onClick={() => setSettingsOpen(true)}
+                className="shrink-0 font-semibold underline underline-offset-2 hover:text-fg"
+              >
+                {t('app.openSettings')}
+              </button>
+            </div>
+          )}
           {state.status === 'idle' ? (
             <div className="flex flex-1 flex-col items-center justify-center gap-6 p-6 text-center">
               <div className="flex h-14 w-14 items-center justify-center rounded-2xl border border-line bg-surface text-accent">
@@ -311,6 +361,7 @@ export default function Workspace() {
           </button>
         ))}
       </div>
-    </div>
+    <SettingsPanel open={settingsOpen} onClose={() => setSettingsOpen(false)} />
+      </div>
   )
 }

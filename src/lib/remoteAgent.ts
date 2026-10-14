@@ -1,5 +1,6 @@
 import type { AgentEvent } from './agent'
 import type { Locale } from '@/i18n'
+import { hasKeys, loadSettings } from './settings'
 
 /**
  * Client for the live agent backend (see `server/agent-server.mjs` for the
@@ -11,6 +12,42 @@ import type { Locale } from '@/i18n'
 export const AGENT_API_URL: string | undefined = import.meta.env.VITE_AGENT_API_URL || undefined
 
 export const remoteEnabled = (): boolean => Boolean(AGENT_API_URL)
+
+/** True when the visitor forced the local simulator in workspace settings. */
+export const demoForced = (): boolean => loadSettings().mode === 'demo'
+
+/** Per-request provider keys from workspace settings (never persisted server-side). */
+function runtimeHeaders(): Record<string, string> {
+  const settings = loadSettings()
+  return hasKeys(settings) ? { 'x-rsb-keys': JSON.stringify(settings.keys) } : {}
+}
+
+export type BackendStatus = {
+  ok: boolean
+  engine: 'llm' | 'deterministic'
+  providers: string[]
+  model: string | null
+  cooldowns: Record<string, number>
+  catalogs: Record<string, string[] | null>
+  runtimeKeys: string[]
+  serverTime: string
+  quotaNote?: string
+}
+
+/** Live introspection of the agent backend (engine, providers, cooldowns). */
+export async function fetchBackendStatus(): Promise<BackendStatus | null> {
+  if (!AGENT_API_URL) return null
+  try {
+    const response = await fetch(AGENT_API_URL.replace(/\/$/, '') + '/v1/status', {
+      headers: runtimeHeaders(),
+      signal: AbortSignal.timeout(8000),
+    })
+    if (!response.ok) return null
+    return (await response.json()) as BackendStatus
+  } catch {
+    return null
+  }
+}
 
 export class RemoteAgentError extends Error {
   status?: number
@@ -43,7 +80,7 @@ export async function* runRemote(
   const base = (AGENT_API_URL ?? '').replace(/\/$/, '')
   const response = await fetch(base + '/v1/runs', {
     method: 'POST',
-    headers: { 'content-type': 'application/json', accept: 'text/event-stream' },
+    headers: { 'content-type': 'application/json', accept: 'text/event-stream', ...runtimeHeaders() },
     body: JSON.stringify({ prompt, locale }),
     signal,
   })
