@@ -35,6 +35,28 @@ async function blobReadOptions() {
 
 const prefix = 'rsb-jobs/'
 
+async function drainStream(stream) {
+  if (!stream) return ''
+  if (typeof stream.getReader === 'function') {
+    const reader = stream.getReader()
+    const decoder = new TextDecoder()
+    let out = ''
+    for (;;) {
+      const { done, value } = await reader.read()
+      if (done) break
+      out += decoder.decode(value, { stream: true })
+    }
+    return out
+  }
+  return new Promise((resolve, reject) => {
+    let out = ''
+    stream.setEncoding?.('utf8')
+    stream.on('data', (c) => (out += c))
+    stream.on('end', () => resolve(out))
+    stream.on('error', reject)
+  })
+}
+
 function fsDir() {
   return process.env.RSB_JOB_DIR || join(tmpdir(), 'rsb-jobs')
 }
@@ -83,13 +105,11 @@ export async function getJob(id) {
   if (blobToken()) {
     const { get } = await blob()
     try {
-      // get() resolves to blob metadata; private stores expose the bytes via
-      // the presigned downloadUrl.
-      const meta = await get(prefix + id, await blobReadOptions())
-      if (!meta?.downloadUrl) return null
-      const res = await fetch(meta.downloadUrl)
-      if (!res.ok) return null
-      return JSON.parse(await res.text())
+      // get() resolves to { statusCode, headers, stream, blob }; the document
+      // bytes live in the stream (node or web flavour).
+      const res = await get(prefix + id, await blobReadOptions())
+      if (!res || (res.statusCode && res.statusCode !== 200)) return null
+      return JSON.parse(await drainStream(res.stream))
     } catch {
       return null
     }
