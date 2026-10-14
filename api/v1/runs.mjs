@@ -12,6 +12,7 @@ import { runEvents } from '../../server/engine.mjs'
 import { parseRuntimeKeys } from '../../server/orchestrator.mjs'
 import { createJob, jobStoreKind } from '../../server/jobstore.mjs'
 import { kickWorker, workerOrigin } from '../../server/worker.mjs'
+import { reapStaleJobs } from '../../server/reaper.mjs'
 
 /** Queued runs need a durable store: Vercel Blob on Vercel, fs elsewhere. */
 const queueAvailable = () => jobStoreKind() === 'blob' || !process.env.VERCEL
@@ -56,6 +57,7 @@ export default async function handler(req, res) {
       res.status(503).json({ error: 'queue unavailable: no durable job store configured' })
       return
     }
+    reapStaleJobs().catch(() => null)
     const job = await createJob({
       prompt: payload.prompt ?? '',
       locale: payload.locale,

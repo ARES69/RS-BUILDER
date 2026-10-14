@@ -1,16 +1,10 @@
 /**
- * GET/POST /api/v1/reap — the stuck-job reaper (Vercel Cron, every 10 min).
- * Re-kicks jobs whose worker died (no heartbeat) or that never started,
- * within the attempt budget; beyond it, marks them failed with a reason.
+ * GET/POST /api/v1/reap — manual/daily-cron trigger for the stuck-job reaper.
+ * Opportunistic sweeps also happen on queued-run creation (server/reaper.mjs).
  */
-import { appendJobEvents, listJobs } from '../../server/jobstore.mjs'
-import { kickWorker, workerOrigin } from '../../server/worker.mjs'
+import { reapStaleJobs } from '../../server/reaper.mjs'
 
 export const config = { runtime: 'nodejs', maxDuration: 60 }
-
-const MAX_ATTEMPTS = 2
-const STALE_QUEUED_MS = 2 * 60_000
-const STALE_RUNNING_MS = 3 * 60_000
 
 export default async function handler(req, res) {
   const secret = process.env.CRON_SECRET
@@ -20,29 +14,6 @@ export default async function handler(req, res) {
     res.status(401).json({ error: 'unauthorized: provide CRON_SECRET' })
     return
   }
-
-  const now = Date.now()
-  const jobs = await listJobs()
-  const reaped = []
-  for (const job of jobs) {
-    if (job.status === 'queued' && now - job.updatedAt > STALE_QUEUED_MS) {
-      if ((job.attempts || 0) < MAX_ATTEMPTS) {
-        await kickWorker(workerOrigin(), job)
-        reaped.push({ id: job.id, action: 're-kicked' })
-      } else {
-        await appendJobEvents(job.id, [], { status: 'failed', error: 'never started (attempts exhausted)' })
-        reaped.push({ id: job.id, action: 'failed' })
-      }
-    } else if (job.status === 'running' && now - (job.heartbeatAt || 0) > STALE_RUNNING_MS) {
-      if ((job.attempts || 0) < MAX_ATTEMPTS) {
-        await appendJobEvents(job.id, [], { status: 'queued' })
-        await kickWorker(workerOrigin(), job)
-        reaped.push({ id: job.id, action: 're-kicked' })
-      } else {
-        await appendJobEvents(job.id, [], { status: 'failed', error: 'worker died (heartbeat lost)' })
-        reaped.push({ id: job.id, action: 'failed' })
-      }
-    }
-  }
-  res.status(200).json({ ok: true, scanned: jobs.length, reaped })
+  const result = await reapStaleJobs({ force: true })
+  res.status(200).json({ ok: true, ...result })
 }
