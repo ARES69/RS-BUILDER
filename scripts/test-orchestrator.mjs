@@ -152,6 +152,13 @@ check(zen.model === 'opencode-zen/nemotron-3-ultra-free', 'zen catalog discovere
 check(zenMock.getSawAuth() === null, 'no Authorization header sent for anonymous zen calls')
 check(zen.events.some((e) => e.type === 'plan'), 'zen run produced a plan')
 
+/* --- B2: keyed Zen serves the paid catalog ---------------------------- */
+process.env.OPENCODE_API_KEY = 'zen-key'
+const keyedZen = await collect('One welcome screen', 'en')
+check(keyedZen.model === 'opencode-zen/zen-paid-1', 'keyed zen offers the paid catalog, not the client-only free tier → ' + keyedZen.model)
+check(zenMock.getSawAuth() === 'Bearer zen-key', 'keyed zen sends the Authorization header → ' + zenMock.getSawAuth())
+delete process.env.OPENCODE_API_KEY
+
 /* --- C: guards -------------------------------------------------------- */
 const { executeWebFetch, executeCode } = await import('../server/orchestrator.mjs')
 const blocked = await executeWebFetch({ url: 'http://127.0.0.1:9/secret' })

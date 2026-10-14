@@ -249,6 +249,9 @@ function serializeAnthropic(turns) {
 /*     ("free tier can only be used from within OpenCode"), so zen is  */
 /*     enabled only when OPENCODE_API_KEY is set — or when explicitly  */
 /*     forced via RSB_PROVIDERS (the /models catalog stays public).    */
+/*     With a key the PAID catalog is served cheapest-first (free      */
+/*     models reject keyed calls too); a zero balance answers 402 and  */
+/*     cools the provider for 15 min, so a top-up self-activates.      */
 /*  2. openrouter    — $0 tool-capable models discovered via /models   */
 /*     (or RSB_LLM_MODEL_CHAIN / OPENAI_MODEL override). Free accounts */
 /*     get 50 requests/day across all :free models (resets 00:00 UTC); */
@@ -318,7 +321,7 @@ const KEYED_PROVIDERS = {
 const zenBase = () => (process.env.RSB_ZEN_BASE_URL || 'https://opencode.ai/zen/v1').replace(/\/$/, '')
 const orBase = () => (process.env.OPENAI_BASE_URL || 'https://api.openrouter.ai/v1').replace(/\/$/, '')
 
-let zenCache = { at: 0, models: null }
+let zenCache = { anon: { at: 0, models: null }, keyed: { at: 0, models: null } }
 let orCache = { at: 0, models: null }
 
 export function enabledProviderIds() {
@@ -351,11 +354,25 @@ export function __resetProviderCooldowns() {
   providerCooldownUntil.clear()
 }
 
+const ZEN_BILLING_COOLDOWN_MS = 15 * 60 * 1000
+
 function noteRateLimit(entry, response) {
-  if (response.status !== 429) return
-  const reset = Number(response.headers.get('x-ratelimit-reset') || 0)
-  if (reset > Date.now() + 60_000) {
-    const until = Math.min(reset, Date.now() + 24 * 60 * 60 * 1000)
+  const status = response.status
+  if (status === 429) {
+    const reset = Number(response.headers.get('x-ratelimit-reset') || 0)
+    if (reset > Date.now() + 60_000) {
+      const until = Math.min(reset, Date.now() + 24 * 60 * 60 * 1000)
+      const prev = providerCooldownUntil.get(entry.id) ?? 0
+      if (until > prev) providerCooldownUntil.set(entry.id, until)
+    }
+    return
+  }
+  // Zen failures are account-scoped: the free tier is client-only (403) and the
+  // paid catalog needs balance (402 "Insufficient account funds"). Cool the
+  // whole provider briefly so the chain stops re-probing dead entries every
+  // turn; a top-up on opencode.ai is picked up when the cooldown lapses.
+  if (entry.id === 'opencode-zen' && (status === 402 || status === 403)) {
+    const until = Date.now() + ZEN_BILLING_COOLDOWN_MS
     const prev = providerCooldownUntil.get(entry.id) ?? 0
     if (until > prev) providerCooldownUntil.set(entry.id, until)
   }
@@ -385,20 +402,52 @@ async function fetchJson(url, headers, signal, timeoutMs = 10000) {
   }
 }
 
-/** Live Zen catalog: which free models still exist right now. */
+/** Cheapest-first preference for the keyed (paid) Zen catalog. */
+const ZEN_CHEAP_FIRST = [
+  'gpt-5.4-nano',
+  'gemini-3.5-flash-lite',
+  'qwen3.8-flash',
+  'glm-5.3-flash',
+  'deepseek-v4.1-flash',
+  'gpt-5.4-mini',
+  'minimax-m3',
+  'kimi-k2.7-code',
+  'claude-haiku-5-5',
+  'gemini-3.8-flash',
+]
+
+/**
+ * Live Zen catalog.
+ * Anonymous mode offers the free tier (client-only since Oct 2026, kept for
+ * completeness / forced RSB_PROVIDERS); keyed mode offers the PAID catalog —
+ * that is what a key buys, since free models reject keyed calls too — ordered
+ * cheapest-first so a small balance lasts.
+ */
 async function zenModels(signal) {
-  if (zenCache.models && Date.now() - zenCache.at < 60 * 60 * 1000) return zenCache.models
-  let models = ZEN_SNAPSHOT
+  const keyed = Boolean(process.env.OPENCODE_API_KEY)
+  const cache = keyed ? zenCache.keyed : zenCache.anon
+  if (cache.models && Date.now() - cache.at < 60 * 60 * 1000) return cache.models
+  let models = keyed ? ZEN_CHEAP_FIRST : ZEN_SNAPSHOT
   try {
-    const headers = process.env.OPENCODE_API_KEY ? { authorization: 'Bearer ' + process.env.OPENCODE_API_KEY } : {}
+    const headers = keyed ? { authorization: 'Bearer ' + process.env.OPENCODE_API_KEY } : {}
     const data = await fetchJson(zenBase() + '/models', headers, signal)
     const ids = (data.data ?? []).map((m) => m.id).filter(Boolean)
-    const free = ids.filter((id) => id.endsWith('-free') || ZEN_SNAPSHOT.includes(id))
-    if (free.length) models = free
+    if (keyed) {
+      const paid = ids.filter((id) => !id.endsWith('-free') && id !== 'test' && id !== 'big-pickle')
+      if (paid.length) {
+        const rank = (id) => (ZEN_CHEAP_FIRST.includes(id) ? ZEN_CHEAP_FIRST.indexOf(id) : ZEN_CHEAP_FIRST.length)
+        models = [...paid].sort((a, b) => rank(a) - rank(b))
+      }
+    } else {
+      const free = ids.filter((id) => id.endsWith('-free') || ZEN_SNAPSHOT.includes(id))
+      if (free.length) models = free
+    }
   } catch {
     /* keep snapshot */
   }
-  zenCache = { at: Date.now(), models }
+  const next = { at: Date.now(), models }
+  if (keyed) zenCache.keyed = next
+  else zenCache.anon = next
   return models
 }
 

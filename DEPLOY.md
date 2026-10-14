@@ -130,6 +130,9 @@ LLM-цикл с tool-calling (`server/orchestrator.mjs`), иначе детер�
    **Внимание:** с октября 2026 Zen отклоняет анонимные chat-completions
    (`403 FreeTierError: free tier can only be used from within OpenCode`), поэтому
    провайдер включается только при `OPENCODE_API_KEY` (или явно через `RSB_PROVIDERS`).
+   С ключом подаётся **платный** каталог cheapest-first (free-модели отклоняют и вызовы
+   с ключом); нулевой баланс отвечает `402 Insufficient account funds`, провайдер уходит
+   в cooldown на 15 минут — пополнение на opencode.ai подхватывается автоматически.
 2. **OpenRouter** — при `OPENAI_MODEL=auto-free` оркестратор сам обнаруживает через
    `GET /models` все модели `:free` с ценой $0 и поддержкой tools (кэш 10 минут).
    Лимит бесплатного аккаунта: **50 запросов/день на все `:free`-модели** (сброс 00:00 UTC);
