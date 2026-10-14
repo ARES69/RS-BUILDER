@@ -149,7 +149,13 @@ const pptx = downloads.find((d) => d.name === 'deck.pptx')
 const srt = downloads.find((d) => d.name === 'captions.srt')
 check(Boolean(pptx) && Buffer.from(pptx.base64, 'base64').slice(0, 2).toString() === 'PK', 'make_slides produced a real .pptx (PK magic) in artifact downloads')
 check(Boolean(srt) && Buffer.from(srt.base64, 'base64').toString().includes('-->'), 'make_captions produced a real .srt in artifact downloads')
-check(events.some((e) => e.type === 'console' && e.line.startsWith('hit ·')), 'search_web returned live results into the console trace')
+let searchOk = events.some((e) => e.type === 'console' && e.line.startsWith('hit ·'))
+if (!searchOk) {
+  // live duckduckgo occasionally rate-limits CI egress: one retry before failing
+  const retry = await collect('Build a small page and a report', 'en')
+  searchOk = retry.events.some((e) => e.type === 'console' && e.line.startsWith('hit ·'))
+}
+check(searchOk, 'search_web returned live results into the console trace')
 check(events.some((e) => e.type === 'browse' && /Mock Portal/.test(e.page.title)), 'http_session drove a real cookie-jar request')
 
 /* --- B: anonymous OpenCode-Zen-style provider ------------------------ */
