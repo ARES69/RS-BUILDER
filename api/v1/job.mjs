@@ -10,10 +10,10 @@ export default async function handler(req, res) {
   const id = String(req.query?.id ?? '')
   if (req.query?.canary === '2') {
     const { put, get, list } = await import('@vercel/blob')
-    const { getToken } = await import('@vercel/oidc')
+    const { getVercelOidcToken } = await import('@vercel/oidc')
     const name = 'rsb-jobs/canary2-' + Date.now()
     await put(name, JSON.stringify({ ping: 2 }), { access: 'private', contentType: 'application/json', addRandomSuffix: false })
-    const oidc = await getToken()
+    const oidc = await getVercelOidcToken()
     const out = { storeId: process.env.BLOB_STORE_ID, hasStatic: Boolean(process.env.BLOB_READ_WRITE_TOKEN) }
     for (const [label, fn] of [
       ['oidcToken', () => get(name, { oidcToken: oidc })],

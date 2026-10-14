@@ -29,7 +29,7 @@ async function blob() {
 let tokenP = null
 async function blobReadOptions() {
   if (process.env.BLOB_READ_WRITE_TOKEN) return { token: process.env.BLOB_READ_WRITE_TOKEN }
-  tokenP = tokenP ?? import('@vercel/oidc').then((m) => m.getToken())
+  tokenP = tokenP ?? import('@vercel/oidc').then((m) => m.getVercelOidcToken())
   return { oidcToken: await tokenP }
 }
 
