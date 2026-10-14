@@ -8,7 +8,7 @@
  *  - re-kicks itself (chained invocation) when the serverless deadline nears,
  *    so the bookkeeping survives even if this invocation is frozen
  */
-import { appendJobEvents, getJob, putJob } from './jobstore.mjs'
+import { getJob, putJob } from './jobstore.mjs'
 import { runEvents } from './engine.mjs'
 
 const BATCH_MS = 400
@@ -45,20 +45,25 @@ export async function processJob(jobId) {
   const controller = new AbortController()
   const deadline = Date.now() + 240_000
   const buffer = []
-  let flushed = false
 
+  // Single-writer rule: the worker owns the document and always PUTs the whole
+  // job (read-modify-write from multiple invocations lost event batches).
   const flush = async (patch) => {
-    flushed = true
-    const events = buffer.splice(0, buffer.length)
-    await appendJobEvents(jobId, events, { heartbeatAt: Date.now(), ...patch })
+    job.events.push(...buffer.splice(0, buffer.length))
+    job.cursor = job.events.length
+    job.heartbeatAt = Date.now()
+    Object.assign(job, patch)
+    await putJob(job)
   }
 
   let lastBatch = Date.now()
   let chained = false
+  let cancelled = false
   try {
     for await (const event of runEvents(job.prompt, job.locale, controller.signal)) {
       const fresh = await getJob(jobId)
       if (!fresh || fresh.status === 'cancelled') {
+        cancelled = true
         controller.abort()
         break
       }
@@ -71,18 +76,16 @@ export async function processJob(jobId) {
       if (now > deadline - KICK_BEFORE_MS && !chained) {
         // hand the remainder to a fresh invocation; this one stops consuming
         chained = true
-        await flush({ status: 'queued', heartbeatAt: Date.now() })
+        await flush({ status: 'queued' })
         await kickWorker(workerOrigin(), { id: jobId, kickToken: job.kickToken })
         return { ok: true, reason: 'chained' }
       }
     }
-    const terminal = controller.signal.aborted ? { status: 'cancelled' } : { status: 'done' }
-    await flush(terminal)
-    return { ok: true, reason: terminal.status }
+    if (cancelled) return { ok: true, reason: 'cancelled' }
+    await flush({ status: 'done' })
+    return { ok: true, reason: 'done' }
   } catch (error) {
     await flush({ status: 'failed', error: String(error?.message ?? error) }).catch(() => {})
     return { ok: false, reason: String(error?.message ?? error) }
-  } finally {
-    if (!flushed && buffer.length) await flush({}).catch(() => {})
   }
 }
