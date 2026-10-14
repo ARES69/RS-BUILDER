@@ -61,7 +61,7 @@ export async function createJob({ prompt, locale, kickToken }) {
   }
   if (blobToken()) {
     const { put } = await blob()
-    await put(prefix + job.id, JSON.stringify(job), { contentType: 'application/json', addRandomSuffix: false })
+    await put(prefix + job.id, JSON.stringify(job), { access: 'private', contentType: 'application/json', addRandomSuffix: false })
   } else {
     await fsWrite(job)
   }
@@ -87,7 +87,7 @@ export async function putJob(job) {
   job.updatedAt = Date.now()
   if (blobToken()) {
     const { put } = await blob()
-    await put(prefix + job.id, JSON.stringify(job), { contentType: 'application/json', addRandomSuffix: false, allowOverwrite: true })
+    await put(prefix + job.id, JSON.stringify(job), { access: 'private', contentType: 'application/json', addRandomSuffix: false, allowOverwrite: true })
   } else {
     await fsWrite(job)
   }
