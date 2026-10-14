@@ -10,7 +10,11 @@ export default async function handler(req, res) {
   const id = String(req.query?.id ?? '')
   const job = await getJob(id)
   if (!job) {
-    res.status(404).json({ error: 'job not found' })
+    const { listJobs, jobStoreKind } = await import('../../server/jobstore.mjs')
+    let listed = []
+    let listError = null
+    try { listed = (await listJobs()).map((j) => j.id + ':' + j.status) } catch (e) { listError = String(e?.message ?? e) }
+    res.status(404).json({ error: 'job not found', debug: { kind: jobStoreKind(), listed, listError, id } })
     return
   }
   const { kickToken, ...rest } = job
