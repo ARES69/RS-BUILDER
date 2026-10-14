@@ -13,6 +13,8 @@
 - Сайт: **https://rs-builder-sigma.vercel.app**
 - Бэкенд: `GET /api/v1/health`, `POST /api/v1/runs` (SSE) — same-origin, без CORS
 - Проверка прода: `PROD_URL=https://rs-builder-sigma.vercel.app node scripts/qa-prod.mjs`
+- Проект Vercel: **`rs-builder-app`** (мигрирован 2026-10-14 со старого `rs-builder`: тот получил
+  ложный флаг abuse-сканера и блокировал новые деплои; алиас перенесён, URL не менялся).
 
 ## Быстрый старт
 
