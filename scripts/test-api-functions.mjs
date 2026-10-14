@@ -98,9 +98,10 @@ process.env.RSB_JOB_DIR = mkdtempSync(join(tmpdir(), 'rsb-jobs-test-'))
 process.env.RSB_PROVIDERS = 'none'
 const { getJob, putJob } = await import('../server/jobstore.mjs')
 const workerHandler = (await import('../api/v1/worker.mjs')).default
-const snapshotHandler = (await import('../api/v1/job.mjs')).default
-const streamHandler = (await import('../api/v1/jobstream.mjs')).default
-const cancelHandler = (await import('../api/v1/jobcancel.mjs')).default
+const jobHandler = (await import('../api/v1/job.mjs')).default
+const snapshotHandler = (req, res) => jobHandler(Object.assign(req, { query: { ...req.query } }), res)
+const streamHandler = (req, res) => jobHandler(Object.assign(req, { query: { ...req.query, stream: '1' } }), res)
+const cancelHandler = (req, res) => jobHandler(Object.assign(req, { method: 'POST', query: { ...req.query } }), res)
 const reapHandler = (await import('../api/v1/reap.mjs')).default
 
 let jobId = null
@@ -163,11 +164,13 @@ let jobId = null
 
 /* --- accounts + persistent history ------------------------------------ */
 process.env.RSB_SESSION_SECRET = 'test-secret-' + Date.now()
-const signupHandler = (await import('../api/v1/auth/signup.mjs')).default
-const loginHandler = (await import('../api/v1/auth/login.mjs')).default
-const meHandler = (await import('../api/v1/auth/me.mjs')).default
-const historyHandler = (await import('../api/v1/history.mjs')).default
-const historyRunHandler = (await import('../api/v1/historyrun.mjs')).default
+const authHandler = (await import('../api/v1/auth.mjs')).default
+const signupHandler = (req, res) => authHandler(Object.assign(req, { query: { action: 'signup' } }), res)
+const loginHandler = (req, res) => authHandler(Object.assign(req, { query: { action: 'login' } }), res)
+const meHandler = (req, res) => authHandler(Object.assign(req, { query: { action: 'me' } }), res)
+const historyRunHandlerBase = (await import('../api/v1/history.mjs')).default
+const historyHandler = (req, res) => historyRunHandlerBase(Object.assign(req, { query: {} }), res)
+const historyRunHandler = (req, res) => historyRunHandlerBase(req, res)
 
 const email = 'tester+' + Date.now() + '@rs-builder.app'
 let cookie = null

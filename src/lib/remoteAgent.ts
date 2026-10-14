@@ -83,7 +83,7 @@ export const activeRemoteJob = (): string | null => activeJobId
 export function cancelActiveRemote(): void {
   if (!activeJobId || !AGENT_API_URL) return
   const id = activeJobId
-  fetch(AGENT_API_URL.replace(/\/$/, '') + '/v1/jobcancel?id=' + id, {
+  fetch(AGENT_API_URL.replace(/\/$/, '') + '/v1/job?id=' + id, {
     method: 'POST',
     headers: runtimeHeaders(),
   }).catch(() => {})

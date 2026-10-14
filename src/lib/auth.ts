@@ -27,12 +27,12 @@ async function call<T>(path: string, init?: RequestInit): Promise<{ ok: boolean;
 export const authAvailable = (): boolean => Boolean(AGENT_API_URL)
 
 export async function fetchMe(): Promise<SessionUser | null> {
-  const r = await call<{ user: SessionUser }>('/v1/auth/me')
+  const r = await call<{ user: SessionUser }>('/v1/auth?action=me')
   return r.ok && r.json?.user ? r.json.user : null
 }
 
 export async function signUp(email: string, password: string): Promise<{ user?: SessionUser; error?: string }> {
-  const r = await call<{ user: SessionUser; error?: string }>('/v1/auth/signup', {
+  const r = await call<{ user: SessionUser; error?: string }>('/v1/auth?action=signup', {
     method: 'POST',
     body: JSON.stringify({ email, password }),
   })
@@ -40,7 +40,7 @@ export async function signUp(email: string, password: string): Promise<{ user?: 
 }
 
 export async function logIn(email: string, password: string): Promise<{ user?: SessionUser; error?: string }> {
-  const r = await call<{ user: SessionUser; error?: string }>('/v1/auth/login', {
+  const r = await call<{ user: SessionUser; error?: string }>('/v1/auth?action=login', {
     method: 'POST',
     body: JSON.stringify({ email, password }),
   })
@@ -48,7 +48,7 @@ export async function logIn(email: string, password: string): Promise<{ user?: S
 }
 
 export async function logOut(): Promise<void> {
-  await call('/v1/auth/logout', { method: 'POST' })
+  await call('/v1/auth?action=logout', { method: 'POST' })
 }
 
 export type HistoryEntry = {
@@ -67,6 +67,6 @@ export async function fetchHistory(): Promise<HistoryEntry[]> {
 }
 
 export async function fetchHistoryRun(jobId: string): Promise<{ events?: unknown[] } | null> {
-  const r = await call<{ events: unknown[] }>('/v1/historyrun?id=' + encodeURIComponent(jobId))
+  const r = await call<{ events: unknown[] }>('/v1/history?id=' + encodeURIComponent(jobId))
   return r.ok && r.json ? r.json : null
 }
