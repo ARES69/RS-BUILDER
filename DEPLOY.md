@@ -158,8 +158,13 @@ LLM-цикл с tool-calling (`server/orchestrator.mjs`), иначе детер�
 проект). Алиас `rs-builder-sigma.vercel.app` перенесён на новый проект через
 `POST /v2/deployments/{id}/aliases`, для пользователей URL не изменился. На новом проекте
 по умолчанию стоял Vercel Authentication (`ssoProtection: all_except_custom_domains`) —
-выключен через `PATCH /v9/projects/{id} {ssoProtection: null}`. Старый проект оставлен
-как есть: владелец аккаунта может подать апелляцию на флаг.
+выключен через `PATCH /v9/projects/{id} {ssoProtection: null}`. **Корень BLOCKED найден:** Vercel валидирует email автора коммитов — деплои блокировались,
+пока автором был невалидный `rs@builder.local` (CLI шлёт git-метаданные с деплоем).
+После переписывания истории (`git filter-branch --env-filter`, автор и коммиттер =
+`lookastarik <lookastarik@gmail.com>`, тот же email настрожен в `git config user.email`)
+старый проект снова деплоится: проверено превью-деплоем `dpl_DnkaxK85EVYJa3h8ky4UvAvgMY1x`
+(READY). Апелляция не нужна. **Правило на будущее: коммитить только с валидным email
+аккаунта Vercel/Git.** Прод оставлен в `rs-builder-app` (оба проекта здоровы).
 
 ## Чек-лист релиза
 
