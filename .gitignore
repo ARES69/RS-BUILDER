@@ -1,0 +1,8 @@
+node_modules
+dist
+preview
+release
+.shots
+.vercel
+.env.local
+*.tsbuildinfo
