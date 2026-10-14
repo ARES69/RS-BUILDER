@@ -98,9 +98,9 @@ process.env.RSB_JOB_DIR = mkdtempSync(join(tmpdir(), 'rsb-jobs-test-'))
 process.env.RSB_PROVIDERS = 'none'
 const { getJob, putJob } = await import('../server/jobstore.mjs')
 const workerHandler = (await import('../api/v1/worker.mjs')).default
-const snapshotHandler = (await import('../api/v1/runs/[id].mjs')).default
-const streamHandler = (await import('../api/v1/runs/[id]/stream.mjs')).default
-const cancelHandler = (await import('../api/v1/runs/[id]/cancel.mjs')).default
+const snapshotHandler = (await import('../api/v1/job.mjs')).default
+const streamHandler = (await import('../api/v1/jobstream.mjs')).default
+const cancelHandler = (await import('../api/v1/jobcancel.mjs')).default
 const reapHandler = (await import('../api/v1/reap.mjs')).default
 
 let jobId = null

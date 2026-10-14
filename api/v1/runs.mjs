@@ -67,9 +67,9 @@ export default async function handler(req, res) {
     res.status(202).json({
       jobId: job.id,
       status: job.status,
-      statusUrl: '/api/v1/runs/' + job.id,
-      streamUrl: '/api/v1/runs/' + job.id + '/stream',
-      cancelUrl: '/api/v1/runs/' + job.id + '/cancel',
+      statusUrl: '/api/v1/job?id=' + job.id,
+      streamUrl: '/api/v1/jobstream?id=' + job.id,
+      cancelUrl: '/api/v1/jobcancel?id=' + job.id,
     })
     return
   }

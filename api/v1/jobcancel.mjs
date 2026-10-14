@@ -1,5 +1,5 @@
-/** POST /api/v1/runs/:id/cancel — ask the worker to stop between batches. */
-import { appendJobEvents, getJob } from '../../../../server/jobstore.mjs'
+/** POST /api/v1/jobcancel?id=… — ask the worker to stop between batches. */
+import { appendJobEvents, getJob } from '../../server/jobstore.mjs'
 
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*')

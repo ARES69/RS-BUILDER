@@ -1,10 +1,9 @@
 /**
- * GET /api/v1/runs/:id/stream?cursor=N — SSE tail of a queued job.
- * Re-attachable: the client keeps its cursor and reconnects after any blip;
- * the server side ends politely at a terminal status or its own deadline and
- * the client simply reconnects with the last cursor.
+ * GET /api/v1/jobstream?id=…&cursor=N — re-attachable SSE tail of a queued job.
+ * Ends politely at a terminal status or its own deadline; the client reconnects
+ * with the last cursor, so blips and tab closes do not lose events.
  */
-import { getJob } from '../../../../server/jobstore.mjs'
+import { getJob } from '../../server/jobstore.mjs'
 
 export const config = { runtime: 'nodejs', maxDuration: 300 }
 

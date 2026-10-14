@@ -83,7 +83,7 @@ export const activeRemoteJob = (): string | null => activeJobId
 export function cancelActiveRemote(): void {
   if (!activeJobId || !AGENT_API_URL) return
   const id = activeJobId
-  fetch(AGENT_API_URL.replace(/\/$/, '') + '/v1/runs/' + id + '/cancel', {
+  fetch(AGENT_API_URL.replace(/\/$/, '') + '/v1/jobcancel?id=' + id, {
     method: 'POST',
     headers: runtimeHeaders(),
   }).catch(() => {})
@@ -114,7 +114,7 @@ async function* runQueued(prompt: string, locale: Locale, signal?: AbortSignal):
   let terminal = false
   while (!terminal && reconnects < 8 && !signal?.aborted) {
     try {
-      const response = await fetch(base + streamPath + '?cursor=' + cursor, {
+      const response = await fetch(base + streamPath + (streamPath.includes('?') ? '&' : '?') + 'cursor=' + cursor, {
         headers: { accept: 'text/event-stream', ...runtimeHeaders() },
         signal,
       })
