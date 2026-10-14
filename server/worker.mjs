@@ -9,6 +9,7 @@
  *    so the bookkeeping survives even if this invocation is frozen
  */
 import { getJob, putJob } from './jobstore.mjs'
+import { appendRunHistory } from './history.mjs'
 import { runEvents } from './engine.mjs'
 
 const BATCH_MS = 400
@@ -81,11 +82,17 @@ export async function processJob(jobId) {
         return { ok: true, reason: 'chained' }
       }
     }
-    if (cancelled) return { ok: true, reason: 'cancelled' }
+    if (cancelled) {
+      await flush({ status: 'cancelled' }).catch(() => {})
+      if (job.ownerId) await appendRunHistory(job.ownerId, job).catch(() => {})
+      return { ok: true, reason: 'cancelled' }
+    }
     await flush({ status: 'done' })
+    if (job.ownerId) await appendRunHistory(job.ownerId, job).catch(() => {})
     return { ok: true, reason: 'done' }
   } catch (error) {
     await flush({ status: 'failed', error: String(error?.message ?? error) }).catch(() => {})
+    if (job.ownerId) await appendRunHistory(job.ownerId, job).catch(() => {})
     return { ok: false, reason: String(error?.message ?? error) }
   }
 }

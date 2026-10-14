@@ -10,8 +10,10 @@
 import { randomBytes } from 'node:crypto'
 import { runEvents } from '../../server/engine.mjs'
 import { parseRuntimeKeys } from '../../server/orchestrator.mjs'
-import { createJob, jobStoreKind } from '../../server/jobstore.mjs'
+import { createJob, getJob, jobStoreKind } from '../../server/jobstore.mjs'
+import { sessionFromRequest } from '../../server/auth.mjs'
 import { kickWorker, workerOrigin } from '../../server/worker.mjs'
+import { reapStaleJobs } from '../../server/reaper.mjs'
 
 /** Queued runs need a durable store: Vercel Blob on Vercel, fs elsewhere. */
 const queueAvailable = () => jobStoreKind() === 'blob' || !process.env.VERCEL
@@ -56,18 +58,28 @@ export default async function handler(req, res) {
       res.status(503).json({ error: 'queue unavailable: no durable job store configured' })
       return
     }
+    reapStaleJobs().catch(() => null)
     const job = await createJob({
       prompt: payload.prompt ?? '',
       locale: payload.locale,
       kickToken: randomBytes(16).toString('hex'),
+      ownerId: sessionFromRequest(req) || undefined,
     })
     kickWorker(workerOrigin(), job)
+    // The kick fetch must be dispatched while this invocation is still alive:
+    // wait for the worker's first heartbeat (or give up after 8s and let the
+    // stream/reaper kick later).
+    for (let i = 0; i < 16; i++) {
+      const fresh = await getJob(job.id)
+      if (fresh && (fresh.status !== 'queued' || (fresh.attempts || 0) > 0)) break
+      await new Promise((r) => setTimeout(r, 500))
+    }
     res.status(202).json({
       jobId: job.id,
       status: job.status,
-      statusUrl: '/api/v1/runs/' + job.id,
-      streamUrl: '/api/v1/runs/' + job.id + '/stream',
-      cancelUrl: '/api/v1/runs/' + job.id + '/cancel',
+      statusUrl: '/api/v1/job?id=' + job.id,
+      streamUrl: '/api/v1/jobstream?id=' + job.id,
+      cancelUrl: '/api/v1/jobcancel?id=' + job.id,
     })
     return
   }

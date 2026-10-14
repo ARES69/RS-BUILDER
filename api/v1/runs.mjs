@@ -11,6 +11,7 @@ import { randomBytes } from 'node:crypto'
 import { runEvents } from '../../server/engine.mjs'
 import { parseRuntimeKeys } from '../../server/orchestrator.mjs'
 import { createJob, getJob, jobStoreKind } from '../../server/jobstore.mjs'
+import { sessionFromRequest } from '../../server/auth.mjs'
 import { kickWorker, workerOrigin } from '../../server/worker.mjs'
 import { reapStaleJobs } from '../../server/reaper.mjs'
 
@@ -62,6 +63,7 @@ export default async function handler(req, res) {
       prompt: payload.prompt ?? '',
       locale: payload.locale,
       kickToken: randomBytes(16).toString('hex'),
+      ownerId: sessionFromRequest(req) || undefined,
     })
     kickWorker(workerOrigin(), job)
     // The kick fetch must be dispatched while this invocation is still alive:

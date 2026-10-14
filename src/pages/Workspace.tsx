@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
-import { ArrowLeft, Coins, Gauge, Plus, RotateCcw, Settings, Sparkles } from 'lucide-react'
+import { ArrowLeft, Coins, Gauge, History, LogIn, LogOut, Plus, RotateCcw, Settings, Sparkles } from 'lucide-react'
 import { useI18n } from '@/i18n'
 import { scenarios, scenarioFor } from '@/data/scenarios'
 import type { Scenario } from '@/lib/agent'
@@ -14,6 +14,9 @@ import { RunPanel } from '@/components/workspace/RunPanel'
 import { ThemeToggle } from '@/components/layout/ThemeToggle'
 import { AGENT_API_URL, demoForced, fetchBackendStatus, remoteEnabled, type BackendStatus } from '@/lib/remoteAgent'
 import { SettingsPanel } from '@/components/workspace/SettingsPanel'
+import { AuthModal } from '@/components/workspace/AuthModal'
+import { fetchHistory, fetchHistoryRun, fetchMe, logOut, type HistoryEntry, type SessionUser } from '@/lib/auth'
+import type { AgentEvent } from '@/lib/agent'
 import { LanguageSwitcher } from '@/components/layout/LanguageSwitcher'
 
 /** Maps showcase / feature slugs onto a scripted scenario id. */
@@ -37,7 +40,7 @@ const ALIAS: Record<string, string> = {
 const SPEEDS = [0.5, 1, 2, 4]
 
 export default function Workspace() {
-  const { t, l } = useI18n()
+  const { t, l, locale } = useI18n()
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [backend, setBackend] = useState<BackendStatus | null>(null)
 
@@ -67,7 +70,34 @@ export default function Workspace() {
       Boolean(backend.providers?.length) === false ||
       (backend.providers ?? []).every((id) => cooldownNow(backend?.cooldowns?.[id])))
   const [params] = useSearchParams()
-  const { state, start, stop, reset, speed, setSpeed, activeScenario } = useAgentRun()
+  const { state, start, stop, reset, replay, speed, setSpeed, activeScenario } = useAgentRun()
+  const [user, setUser] = useState<SessionUser | null>(null)
+  const [authOpen, setAuthOpen] = useState(false)
+  const [history, setHistory] = useState<HistoryEntry[]>([])
+
+  const refreshHistory = useCallback(() => {
+    fetchHistory().then(setHistory)
+  }, [])
+
+  useEffect(() => {
+    fetchMe().then((u) => {
+      setUser(u)
+      if (u) fetchHistory().then(setHistory)
+    })
+  }, [])
+
+  useEffect(() => {
+    if (user && state.status === 'done') refreshHistory()
+  }, [user, state.status, refreshHistory])
+
+  const openHistoryRun = useCallback(
+    async (jobId: string) => {
+      const job = await fetchHistoryRun(jobId)
+      if (job?.events) replay(job.events as AgentEvent[])
+    },
+    [replay],
+  )
+
   const [tab, setTab] = useState<'plan' | 'preview' | 'browser' | 'files' | 'console'>('plan')
   const [mobileView, setMobileView] = useState<'chat' | 'panel'>('chat')
   const booted = useRef(false)
@@ -179,6 +209,33 @@ export default function Workspace() {
             </button>
           ) : null}
 
+          {user ? (
+            <span className="inline-flex items-center gap-1.5 rounded-full border border-line px-2.5 py-1 text-[11px] text-muted">
+              <span className="max-w-[140px] truncate" title={t('app.signedInAs') + ' ' + user.email}>{user.email}</span>
+              <button
+                type="button"
+                onClick={() => {
+                  logOut().then(() => {
+                    setUser(null)
+                    setHistory([])
+                  })
+                }}
+                aria-label={t('app.signOut')}
+                title={t('app.signOut')}
+                className="text-muted transition-colors hover:text-fg"
+              >
+                <LogOut size={12} />
+              </button>
+            </span>
+          ) : (
+            <button
+              type="button"
+              onClick={() => setAuthOpen(true)}
+              className="inline-flex h-8 items-center gap-1.5 rounded-full border border-line px-3 text-[11.5px] font-semibold text-muted transition-colors hover:border-accent/40 hover:text-accent"
+            >
+              <LogIn size={12} /> {t('app.signIn')}
+            </button>
+          )}
           <button
             type="button"
             onClick={() => setSettingsOpen(true)}
@@ -246,6 +303,38 @@ export default function Workspace() {
                 </button>
               )
             })}
+          </div>
+
+          <div className="max-h-56 overflow-y-auto border-t border-line px-3 py-2">
+            <p className="eyebrow mb-1.5 flex items-center gap-1.5">
+              <History size={11} /> {t('app.historyTitle')}
+            </p>
+            {user ? (
+              history.length === 0 ? (
+                <p className="px-1 text-[11px] leading-snug text-faint">{t('app.historyEmpty')}</p>
+              ) : (
+                <div className="flex flex-col gap-1">
+                  {history.slice(0, 20).map((h) => (
+                    <button
+                      key={h.jobId}
+                      type="button"
+                      onClick={() => openHistoryRun(h.jobId)}
+                      title={t('app.historyReplay')}
+                      className="rounded-lg border border-line bg-surface/40 px-2 py-1.5 text-left transition-colors hover:border-accent/40"
+                    >
+                      <span className="block truncate text-[11.5px] text-fg">{h.prompt}</span>
+                      <span className="mt-0.5 block font-mono text-[10px] text-faint">
+                        {new Date(h.finishedAt || h.createdAt).toLocaleString(locale === 'ru' ? 'ru-RU' : 'en-US')} · {h.status}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              )
+            ) : (
+              <button type="button" onClick={() => setAuthOpen(true)} className="px-1 text-left text-[11px] leading-snug text-cyan hover:underline">
+                {t('app.historyHint')}
+              </button>
+            )}
           </div>
 
           <div className="border-t border-line p-3">
@@ -362,6 +451,14 @@ export default function Workspace() {
         ))}
       </div>
     <SettingsPanel open={settingsOpen} onClose={() => setSettingsOpen(false)} />
+      <AuthModal
+        open={authOpen}
+        onClose={() => setAuthOpen(false)}
+        onAuthed={(u) => {
+          setUser(u)
+          fetchHistory().then(setHistory)
+        }}
+      />
       </div>
   )
 }

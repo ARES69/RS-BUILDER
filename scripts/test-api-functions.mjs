@@ -150,7 +150,7 @@ let jobId = null
   await handler(mockReq('POST', { prompt: 'stale job', locale: 'en', mode: 'queue' }), res)
   const stale = JSON.parse(res.chunks.join('')).jobId
   // age the job document behind the store's back (putJob re-stamps updatedAt)
-  const file = join(process.env.RSB_JOB_DIR, stale + '.json')
+  const file = join(process.env.RSB_JOB_DIR, 'rsb-jobs__' + stale + '.json')
   const aged = JSON.parse(readFileSync(file, 'utf8'))
   aged.updatedAt = Date.now() - 5 * 60_000
   writeFileSync(file, JSON.stringify(aged))
@@ -159,6 +159,59 @@ let jobId = null
   await reapHandler(mockReq('GET', null, { headers: { authorization: 'Bearer test-secret' } }), rres)
   const rep = JSON.parse(rres.chunks.join(''))
   report(rep.reaped.some((r) => r.id === stale && r.action === 're-kicked'), 'reaper re-kicks a stale queued job → ' + JSON.stringify(rep.reaped))
+}
+
+/* --- accounts + persistent history ------------------------------------ */
+process.env.RSB_SESSION_SECRET = 'test-secret-' + Date.now()
+const signupHandler = (await import('../api/v1/auth/signup.mjs')).default
+const loginHandler = (await import('../api/v1/auth/login.mjs')).default
+const meHandler = (await import('../api/v1/auth/me.mjs')).default
+const historyHandler = (await import('../api/v1/history.mjs')).default
+const historyRunHandler = (await import('../api/v1/historyrun.mjs')).default
+
+const email = 'tester+' + Date.now() + '@rs-builder.app'
+let cookie = null
+{
+  const res = mockRes()
+  await signupHandler(mockReq('POST', { email, password: 'supersecret1' }), res)
+  cookie = res.headers['set-cookie']
+  report(res.statusCode === 201 && Boolean(cookie) && res.chunks.join('').includes(email), 'POST /auth/signup → 201 + session cookie')
+}
+{
+  const res = mockRes()
+  await signupHandler(mockReq('POST', { email, password: 'supersecret1' }), res)
+  report(res.statusCode === 409, 'duplicate signup → 409')
+}
+{
+  const res = mockRes()
+  await loginHandler(mockReq('POST', { email, password: 'wrongpass1' }), res)
+  report(res.statusCode === 401, 'wrong password → 401')
+}
+{
+  const res = mockRes()
+  await meHandler(mockReq('GET', null, { headers: { cookie } }), res)
+  const json = JSON.parse(res.chunks.join(''))
+  report(res.statusCode === 200 && json.user.email === email, 'GET /auth/me with cookie → the signed-in user')
+}
+{
+  const res = mockRes()
+  await handler(mockReq('POST', { prompt: 'Исторический запуск', locale: 'ru', mode: 'queue' }, { headers: { cookie } }), res)
+  const json = JSON.parse(res.chunks.join(''))
+  const job = await getJob(json.jobId)
+  report(Boolean(job.ownerId), 'queued run is bound to the signed-in owner → ' + job.ownerId)
+  const wres = mockRes()
+  await workerHandler(mockReq('POST', { jobId: json.jobId, kickToken: job.kickToken }), wres)
+  const hres = mockRes()
+  await historyHandler(mockReq('GET', null, { headers: { cookie } }), hres)
+  const hist = JSON.parse(hres.chunks.join(''))
+  report(hist.runs.length === 1 && hist.runs[0].jobId === json.jobId && hist.runs[0].status === 'done', 'finished run lands in /history → ' + hist.runs.length + ' entry(ies)')
+  const rres = mockRes()
+  await historyRunHandler(mockReq('GET', null, { headers: { cookie }, query: { id: json.jobId } }), rres)
+  const run = JSON.parse(rres.chunks.join(''))
+  report(Array.isArray(run.events) && run.events.length > 5 && !('kickToken' in run), 'GET /historyrun replays the full own run log (' + run.events.length + ' events)')
+  const anon = mockRes()
+  await historyHandler(mockReq('GET'), anon)
+  report(anon.statusCode === 401, 'history without session → 401')
 }
 
 console.log(ok ? '\nVERCEL FUNCTIONS CONTRACT OK' : '\nVERCEL FUNCTIONS CONTRACT FAILED')

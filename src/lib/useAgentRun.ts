@@ -116,7 +116,16 @@ export function useAgentRun() {
     [locale],
   )
 
+  /** Replays a persisted run (history) into the thread without a new execution. */
+  const replay = useCallback((events: AgentEvent[]) => {
+    controller.current?.abort()
+    controller.current = null
+    setActiveScenario(null)
+    const final = events.reduce(reduce, { ...initialRunState, status: 'running' as const })
+    setState({ ...final, status: 'done' })
+  }, [])
+
   useEffect(() => () => controller.current?.abort(), [])
 
-  return { state, start, stop, reset, speed, setSpeed: setSpeedState, activeScenario }
+  return { state, start, stop, reset, replay, speed, setSpeed: setSpeedState, activeScenario }
 }

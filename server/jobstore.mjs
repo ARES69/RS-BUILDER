@@ -76,8 +76,47 @@ async function fsWrite(job) {
 
 export const jobStoreKind = () => (blobToken() ? 'blob' : 'fs')
 
-export async function createJob({ prompt, locale, kickToken }) {
+/* ---- generic JSON document ops (jobs, users, history indexes) ---- */
+
+const fsPath = (path) => join(fsDir(), path.replace(/\//g, '__') + '.json')
+
+export async function getJobDoc(path) {
+  if (blobToken()) {
+    const { get } = await blob()
+    try {
+      const res = await get(path, await blobReadOptions())
+      if (!res || (res.statusCode && res.statusCode !== 200)) return null
+      return JSON.parse(await drainStream(res.stream))
+    } catch {
+      return null
+    }
+  }
+  try {
+    return JSON.parse(await readFile(fsPath(path), 'utf8'))
+  } catch {
+    return null
+  }
+}
+
+export async function putJobDoc(path, doc) {
+  if (blobToken()) {
+    const { put } = await blob()
+    await put(path, JSON.stringify(doc), {
+      access: 'private',
+      contentType: 'application/json',
+      addRandomSuffix: false,
+      allowOverwrite: true,
+    })
+    return doc
+  }
+  await mkdir(fsDir(), { recursive: true })
+  await writeFile(fsPath(path), JSON.stringify(doc))
+  return doc
+}
+
+export async function createJob({ prompt, locale, kickToken, ownerId }) {
   const job = {
+    ownerId: ownerId || null,
     id: 'job_' + Math.random().toString(36).slice(2, 10) + Date.now().toString(36).slice(-4),
     prompt: String(prompt).slice(0, 4000),
     locale: locale === 'ru' ? 'ru' : 'en',
@@ -91,41 +130,17 @@ export async function createJob({ prompt, locale, kickToken }) {
     error: null,
     kickToken,
   }
-  if (blobToken()) {
-    const { put } = await blob()
-    await put(prefix + job.id, JSON.stringify(job), { access: 'private', contentType: 'application/json', addRandomSuffix: false })
-  } else {
-    await fsWrite(job)
-  }
-  return job
+  return putJobDoc(prefix + job.id, job)
 }
 
 export async function getJob(id) {
   if (!/^job_[a-z0-9]{6,24}$/i.test(id)) return null
-  if (blobToken()) {
-    const { get } = await blob()
-    try {
-      // get() resolves to { statusCode, headers, stream, blob }; the document
-      // bytes live in the stream (node or web flavour).
-      const res = await get(prefix + id, await blobReadOptions())
-      if (!res || (res.statusCode && res.statusCode !== 200)) return null
-      return JSON.parse(await drainStream(res.stream))
-    } catch {
-      return null
-    }
-  }
-  return fsRead(id)
+  return getJobDoc(prefix + id)
 }
 
 export async function putJob(job) {
   job.updatedAt = Date.now()
-  if (blobToken()) {
-    const { put } = await blob()
-    await put(prefix + job.id, JSON.stringify(job), { access: 'private', contentType: 'application/json', addRandomSuffix: false, allowOverwrite: true })
-  } else {
-    await fsWrite(job)
-  }
-  return job
+  return putJobDoc(prefix + job.id, job)
 }
 
 /** Appends events and/or moves status; single writer per job (the worker). */
@@ -156,8 +171,14 @@ export async function listJobs() {
   try {
     const names = await readdir(fsDir())
     const jobs = []
-    for (const n of names) if (n.endsWith('.json')) jobs.push(await fsRead(n.slice(0, -5)))
-    return jobs.filter(Boolean)
+    for (const n of names) {
+      if (!n.endsWith('.json')) continue
+      try {
+        const doc = JSON.parse(await readFile(join(fsDir(), n), 'utf8'))
+        if (doc && typeof doc.id === 'string' && doc.id.startsWith('job_')) jobs.push(doc)
+      } catch { /* skip unreadable */ }
+    }
+    return jobs
   } catch {
     return []
   }
