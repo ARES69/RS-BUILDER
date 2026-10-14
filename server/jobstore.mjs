@@ -12,7 +12,10 @@ import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 
-const blobToken = () => process.env.BLOB_READ_WRITE_TOKEN || null
+/* OIDC zero-config: on Vercel the store may be connected without a static
+   token (BLOB_STORE_ID + VERCEL_OIDC_TOKEN are exchanged by @vercel/blob). */
+const blobToken = () =>
+  process.env.BLOB_READ_WRITE_TOKEN || (process.env.BLOB_STORE_ID && process.env.VERCEL ? 'oidc' : null)
 
 let blobP = null
 async function blob() {
