@@ -106,13 +106,17 @@
    при resume), тест-секция F; фикс квоты: chat() скипает провайдер в cooldown уже на
    уровне вызова (раньше первый фолбэк-прогон дня сжигал ~24 запроса 429); searchWeb:
    duckduckgo челленджит датацентр-IP → фолбэк Wikipedia REST с контактным UA.
+5. **S2-auth-hard (15.10.2026)**: rate-limits auth (append-only счётчики rsb-rl,
+   окна 10 мин: login 6/email+30/ip, signup 5/ip, reset 3/email); recovery-коды
+   3 шт на signup (одноразовые, append-only used-доки), сброс пароля по коду;
+   креденшалы вынесены в append-only cred-доки (rsb-cred/<hash>/<ts>) — перезапись
+   user-дока лагает на чтении, single-write доки нет; verifyLogin по свежему cred.
 
 ## 6. Открытые нити (порядок по умолчанию)
 
 1. **Биллинг**: Stripe-кредиты по тарифам прайсинга + метринг LLM-запусков
    (нужен Stripe-ключ юзера).
-2. **Auth-hardening**: rate-limit на login/signup, сброс пароля (нужен email-провайдер
-   или одноразовые коды в истории), OAuth GitHub как апгрейд.
+2. **Auth-hardening v2**: OAuth GitHub как апгрейд входа (коды и лимиты уже есть).
 3. Zen-баланс: пополнение юзером → ключ оживёт сам (cooldown 15 мин).
 4. Мелочи: кастомный домен rs-builder.app (упоминался в S1), OG/SEO-аудит.
 
