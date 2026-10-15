@@ -6,7 +6,9 @@ import { useI18n } from '@/i18n'
 function reduce(state: RunState, event: AgentEvent): RunState {
   switch (event.type) {
     case 'run_start':
-      return { ...initialRunState, status: 'running', model: event.model ?? null }
+      // job_meta (queued transport) arrives BEFORE the server run_start and
+      // must survive it: jobId drives follow-up continuation
+      return { ...initialRunState, status: 'running', model: event.model ?? null, jobId: state.jobId }
     case 'model':
       return { ...state, model: event.model }
     case 'job_meta':
