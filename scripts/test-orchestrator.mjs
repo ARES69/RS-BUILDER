@@ -45,6 +45,7 @@ function nextMove(messages) {
 
 function llmMockServer(port, { models, recordAuth } = {}) {
   let sawAuth = null
+  const hits = {}
   const server = createServer((req, res) => {
     let body = ''
     req.on('data', (c) => (body += c))
@@ -55,6 +56,7 @@ function llmMockServer(port, { models, recordAuth } = {}) {
       }
       if (recordAuth) sawAuth = req.headers.authorization ?? null
       const payload = JSON.parse(body || '{}')
+      hits[payload.model] = (hits[payload.model] ?? 0) + 1
       if (payload.model === 'broken-model') {
         res.statusCode = 402
         res.setHeader('content-type', 'application/json')
@@ -76,7 +78,7 @@ function llmMockServer(port, { models, recordAuth } = {}) {
       res.end(JSON.stringify({ choices: [{ message: { role: 'assistant', content: move.content, tool_calls: move.tool_calls } }] }))
     })
   })
-  return { server: server.listen(port), getSawAuth: () => sawAuth }
+  return { server: server.listen(port), getSawAuth: () => sawAuth, hits }
 }
 
 const openRouterMock = llmMockServer(8798, { models: [] })
@@ -189,7 +191,8 @@ const { providerEntries, __resetProviderCooldowns } = await import('../server/or
 process.env.RSB_PROVIDERS = 'openrouter'
 process.env.RSB_LLM_MODEL_CHAIN = 'quota-model, mock-model'
 const cooled = await collect('One more welcome screen', 'en')
-check(cooled.model === 'openrouter/mock-model', '429 quota model skipped, run continues on the next → ' + cooled.model)
+check(openRouterMock.hits['quota-model'] === 1, 'daily-429 model probed exactly once per run → hits=' + openRouterMock.hits['quota-model'])
+check(cooled.model === null && cooled.events.some((e) => e.type === 'plan'), 'account-level 429 cools the whole provider; the run falls back gracefully instead of burning quota → model=' + cooled.model)
 let entriesNow = await providerEntries()
 check(entriesNow.length === 0, 'provider cooled down after account-level daily 429 → entries=' + entriesNow.length)
 __resetProviderCooldowns()

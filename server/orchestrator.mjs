@@ -647,6 +647,12 @@ async function chat(entries, system, turns, signal) {
   let lastError = null
   for (const entry of entries) {
     if (signal?.aborted) throw new Error('run aborted')
+    // an account-level cooldown discovered mid-run (daily 429, billing 402/403)
+    // skips the whole provider instead of burning a request per model
+    if ((providerCooldownUntil.get(entry.id) ?? 0) > Date.now()) {
+      lastError = lastError ?? new Error(entry.id + ' is cooling down (account quota)')
+      continue
+    }
     try {
       const result = await chatOnce(entry, system, turns, signal)
       result.model = entry.id + '/' + entry.model

@@ -287,6 +287,25 @@ export async function searchWeb(query, { limit = 8, signal, timeoutMs = 12000 } 
         if (href && /^https?:/i.test(href) && title.length > 12 && !/duckduckgo\.com/i.test(href)) results.push({ url: href, title })
       }
     }
+    if (!results.length) {
+      // rate-limited egress fallback: Wikipedia REST search (keyless, stable)
+      try {
+        const wUrl = 'https://en.wikipedia.org/w/rest.php/v1/search/page?q=' + encodeURIComponent(query) + '&limit=' + limit
+        const wRes = await fetch(wUrl, { signal: controller.signal, headers: { accept: 'application/json', 'user-agent': 'RSBuilderResearch/1.0 (https://rs-builder-sigma.vercel.app; lookastarik@gmail.com)' } })
+        if (wRes.ok) {
+          const wj = await wRes.json()
+          for (const p of wj.pages ?? []) {
+            results.push({
+              url: 'https://en.wikipedia.org/wiki/' + encodeURIComponent(String(p.title ?? '').replace(/ /g, '_')),
+              title: String(p.title ?? ''),
+              snippet: String(p.description ?? p.excerpt ?? '').replace(/<[^>]+>/g, '').slice(0, 160),
+            })
+          }
+        }
+      } catch {
+        /* keep the duckduckgo verdict */
+      }
+    }
     return { ok: results.length > 0, text: results.length + ' results', results }
   } catch (error) {
     return { ok: false, text: 'search failed: ' + error.message, results: [] }

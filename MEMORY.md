@@ -57,7 +57,13 @@
 - playwright/chromium и системные либы стираются между песочницами:
   `npm i -D --no-save playwright && npx playwright install chromium && npx playwright install-deps chromium`.
 - `.git` может исчезнуть при рестарте песочницы: лечится `git clone` репо и
-  переносом `.git` в воркспейс.
+  переносом `.git` в воркспейс; playwright/chromium/системные либы и node_modules
+  тоже стираются — ставь заново (команды выше).
+- chat() обязана скипать провайдеры в cooldown НА ВЫЗОВ (иначе первый прогон дня
+  сжигает дневную квоту 429-ретраями по всей цепочке).
+- searchWeb: lite/html duckduckgo отдают challenge-страницу с датацентр-IP (200, но
+  без result-link) → фолбэк Wikipedia REST (`/w/rest.php/v1/search/page`) с UA вида
+  `RSBuilderResearch/1.0 (url; email)` — браузерный UA wikipedia даёт 403.
 
 ## 3. Карта продукта (RS-BUILDER)
 
@@ -97,7 +103,9 @@
 4. **S2-cont (15.10.2026)**: MEMORY.md создан по просьбе юзера («дописывай её постоянно» —
    ритуал обязателен каждый slice); v2-чекпоинты очереди: resume LLM-цикла с границы
    шага (turns/plan/files/binaries в job.checkpoint, prune >1.5MB, гейты run_start/plan
-   при resume), тест-секция F, прод-пруф чекпоинта в джобе.
+   при resume), тест-секция F; фикс квоты: chat() скипает провайдер в cooldown уже на
+   уровне вызова (раньше первый фолбэк-прогон дня сжигал ~24 запроса 429); searchWeb:
+   duckduckgo челленджит датацентр-IP → фолбэк Wikipedia REST с контактным UA.
 
 ## 6. Открытые нити (порядок по умолчанию)
 
