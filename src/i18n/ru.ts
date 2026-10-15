@@ -220,12 +220,6 @@ export const ru: Dict = {
     related: 'Связанные возможности',
     tryCta: 'Попробовать в воркспейсе',
     notFound: 'Такой страницы возможности пока нет.',
-    viewCta: 'Сделай такой же',
-    viewMissing: 'Этого артефакта нет в публичной галерее (пока или уже).',
-    viewLoading: 'Загружаю артефакт…',
-    viewVersion: 'версия',
-    viewOriginal: 'оригинал',
-    viewLocale: 'ru',
     backToFeatures: 'Все возможности',
     includedIn: 'Входит в',
     plansAll: 'все тарифы',
@@ -406,4 +400,13 @@ export const ru: Dict = {
     accept: 'Понятно',
     decline: 'Не надо',
   },
+  view: {
+    viewCta: 'Сделай такой же',
+    viewMissing: 'Этого артефакта нет в публичной галерее (пока или уже).',
+    viewLoading: 'Загружаю артефакт…',
+    viewVersion: 'версия',
+    viewOriginal: 'оригинал',
+    viewLocale: 'ru',
+  },
+
 }

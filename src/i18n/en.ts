@@ -218,12 +218,6 @@ export const en = {
     related: 'Related features',
     tryCta: 'Try it in the workspace',
     notFound: 'This feature page does not exist (yet).',
-    viewCta: 'Make your own',
-    viewMissing: 'This artifact is not in the public gallery (yet or anymore).',
-    viewLoading: 'Loading the artifact…',
-    viewVersion: 'version',
-    viewOriginal: 'original url',
-    viewLocale: 'en',
     backToFeatures: 'All features',
     includedIn: 'Included in',
     plansAll: 'all plans',
@@ -404,6 +398,15 @@ export const en = {
     accept: 'Got it',
     decline: 'No thanks',
   },
+  view: {
+    viewCta: 'Make your own',
+    viewMissing: 'This artifact is not in the public gallery (yet or anymore).',
+    viewLoading: 'Loading the artifact…',
+    viewVersion: 'version',
+    viewOriginal: 'original url',
+    viewLocale: 'en',
+  },
+
 }
 
 export type Dict = typeof en
