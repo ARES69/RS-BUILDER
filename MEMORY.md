@@ -132,6 +132,10 @@
    chat() ждёт retry-after ≤45s и ретраит ту же модель; 400 'Parsing failed'/
    'Tool call validation failed' = transient → один ретрай на той же модели.
    SEO: og-image.png (1200x630, absolute), canonical, JSON-LD, robots, sitemap 19 url.
+   + публичный viewer /view/<jobId> (share-петля: артефакт → CTA «Сделай такой же» →
+   /app?prompt=…) и полоса RealRuns на лендинге из живой галереи.
+   УРОК i18n: новые ключи вставлять В нужную секцию (view.* дважды уехали в features);
+   плейwright-локаторы не видеть uppercase-трансформы через innerText — проверять ссылки/DOM.
    ПРОТОКОЛ: продукт больше НИКОГДА не притворяется — нет провайдеров = честная ошибка.
 7. **S2-live-NN (15.10.2026)**: первый живой NN-прогон S2 в проде: groq/openai/gpt-oss-120b
    (ключ юзера в prod+staging env GROQ_API_KEY), план по-русски от модели, артефакт
