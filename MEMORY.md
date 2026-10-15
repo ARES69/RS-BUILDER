@@ -127,7 +127,11 @@
    single-file сборки нет, тесты переведены на мок-LLM, доки переписаны.
    + публичная галерея настоящих прогонов в воркспейсе (/api/v1/artifacts?public=1,
    rsb-gallery/<jobId> + curated backfill): реальные артефакты открываются прямо
-   в preview-песочнице («Марун в самой песочнице»).
+   в preview-песочнице («Марун в самой песочнице»). Галерея заселена живыми
+   groq-прогонами (дек + Марун). УРОК: groq free-tier бьёт 429 per-minute —
+   chat() ждёт retry-after ≤45s и ретраит ту же модель; 400 'Parsing failed'/
+   'Tool call validation failed' = transient → один ретрай на той же модели.
+   SEO: og-image.png (1200x630, absolute), canonical, JSON-LD, robots, sitemap 19 url.
    ПРОТОКОЛ: продукт больше НИКОГДА не притворяется — нет провайдеров = честная ошибка.
 7. **S2-live-NN (15.10.2026)**: первый живой NN-прогон S2 в проде: groq/openai/gpt-oss-120b
    (ключ юзера в prod+staging env GROQ_API_KEY), план по-русски от модели, артефакт
