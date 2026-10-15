@@ -251,9 +251,10 @@ export default function Workspace() {
             onClick={() => setSettingsOpen(true)}
             aria-label={t('app.openSettings')}
             title={t('app.openSettings')}
-            className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-line text-muted transition-colors hover:border-accent/40 hover:text-accent"
+            className="inline-flex h-8 items-center gap-1.5 rounded-full border border-line px-2.5 text-[11.5px] font-semibold text-muted transition-colors hover:border-accent/40 hover:text-accent xl:px-3"
           >
             <Settings size={14} />
+            <span className="hidden xl:inline">{t('app.openSettings')}</span>
           </button>
           <LanguageSwitcher compact />
           <ThemeToggle className="h-8 w-8" />
