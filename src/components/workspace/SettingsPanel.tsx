@@ -9,6 +9,7 @@ import { ExternalLink, X } from 'lucide-react'
 import { cn } from '@/lib/cn'
 import { useI18n } from '@/i18n'
 import { AGENT_API_URL } from '@/lib/remoteAgent'
+import { fetchCredits, type LedgerEntry } from '@/lib/auth'
 import { PROVIDER_META, clearKeys, loadSettings, saveSettings, type BuilderSettings, type RuntimeProviderId } from '@/lib/settings'
 
 export type BackendStatus = {
@@ -43,6 +44,7 @@ export function SettingsPanel({ open, onClose }: { open: boolean; onClose: () =>
   const [draft, setDraft] = useState<BuilderSettings>(() => loadSettings())
   const [status, setStatus] = useState<BackendStatus>(null)
   const [savedAt, setSavedAt] = useState(0)
+  const [credits, setCredits] = useState<{ balance: number; entries: LedgerEntry[] } | null>(null)
 
   useEffect(() => {
     if (!open) return
@@ -50,6 +52,7 @@ export function SettingsPanel({ open, onClose }: { open: boolean; onClose: () =>
     setSavedAt(0)
     let alive = true
     fetchBackendStatus().then((s) => alive && setStatus(s))
+    fetchCredits().then((c) => alive && setCredits(c))
     return () => {
       alive = false
     }
@@ -147,6 +150,33 @@ export function SettingsPanel({ open, onClose }: { open: boolean; onClose: () =>
             </div>
           )}
         </section>
+
+        {/* Credits ledger */}
+        {credits && (
+          <section>
+            <p className="eyebrow mb-2">{t('app.creditsTitle')}</p>
+            <div className="rounded-xl border border-line bg-surface/50 px-3 py-2.5">
+              <div className="mb-1.5 flex items-baseline justify-between">
+                <span className="text-[11.5px] text-muted">{t('app.creditsBalance')}</span>
+                <span className="font-mono text-[15px] font-semibold text-accent">{credits.balance}</span>
+              </div>
+              {credits.entries.length === 0 ? (
+                <p className="text-[10.5px] text-faint">{t('app.creditsEmpty')}</p>
+              ) : (
+                <div className="flex flex-col gap-0.5 font-mono text-[10.5px] text-faint">
+                  {credits.entries.slice(0, 6).map((e, i) => (
+                    <span key={i} className="flex justify-between gap-2">
+                      <span className="truncate">{e.reason}</span>
+                      <span className={e.delta >= 0 ? 'text-accent' : 'text-amber-400'}>
+                        {e.delta >= 0 ? '+' : ''}{e.delta}
+                      </span>
+                    </span>
+                  ))}
+                </div>
+              )}
+            </div>
+          </section>
+        )}
 
         {/* BYOK keys */}
         <section>

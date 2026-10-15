@@ -15,7 +15,7 @@ import { ThemeToggle } from '@/components/layout/ThemeToggle'
 import { AGENT_API_URL, demoForced, fetchBackendStatus, remoteEnabled, type BackendStatus } from '@/lib/remoteAgent'
 import { SettingsPanel } from '@/components/workspace/SettingsPanel'
 import { AuthModal } from '@/components/workspace/AuthModal'
-import { fetchHistory, fetchHistoryRun, fetchMe, logOut, type HistoryEntry, type SessionUser } from '@/lib/auth'
+import { fetchCredits, fetchHistory, fetchHistoryRun, fetchMe, logOut, type HistoryEntry, type SessionUser } from '@/lib/auth'
 import type { AgentEvent } from '@/lib/agent'
 import { LanguageSwitcher } from '@/components/layout/LanguageSwitcher'
 
@@ -88,7 +88,10 @@ export default function Workspace() {
   }, [])
 
   useEffect(() => {
-    if (user && state.status === 'done') refreshHistory()
+    if (user && state.status === 'done') {
+      refreshHistory()
+      fetchCredits().then((c) => c && setUser((u) => (u ? { ...u, credits: c.balance } : u)))
+    }
   }, [user, state.status, refreshHistory])
 
   const openHistoryRun = useCallback(
@@ -213,7 +216,12 @@ export default function Workspace() {
 
           {user ? (
             <span className="inline-flex items-center gap-1.5 rounded-full border border-line px-2.5 py-1 text-[11px] text-muted">
-              <span className="max-w-[140px] truncate" title={t('app.signedInAs') + ' ' + user.email}>{user.email}</span>
+              <span className="max-w-[110px] truncate" title={t('app.signedInAs') + ' ' + user.email}>{user.email}</span>
+              {typeof user.credits === 'number' && (
+                <span className="inline-flex items-center gap-1 font-mono text-[10.5px] text-accent" title={t('app.creditsBalance')}>
+                  <Coins size={11} /> {user.credits}
+                </span>
+              )}
               <button
                 type="button"
                 onClick={() => {

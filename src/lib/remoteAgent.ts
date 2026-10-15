@@ -104,6 +104,19 @@ async function* runQueued(prompt: string, locale: Locale, signal?: AbortSignal, 
     body: JSON.stringify({ prompt, locale, mode: 'queue', parentJobId: opts?.parentJobId || undefined }),
     signal,
   })
+  if (created.status === 402) {
+    const info402 = (await created.json().catch(() => null)) as { balance?: number; min?: number } | null
+    yield {
+      type: 'message',
+      role: 'agent',
+      text: {
+        en: 'Not enough credits for a new run (balance ' + (info402?.balance ?? 0) + ', minimum ' + (info402?.min ?? 100) + '). Top up when Stripe billing lands, or run in demo mode.',
+        ru: 'Недостаточно кредитов для нового запуска (баланс ' + (info402?.balance ?? 0) + ', минимум ' + (info402?.min ?? 100) + '). Пополнение приедет вместе со Stripe-биллингом; а пока — режим симулятора.',
+      },
+    } as AgentEvent
+    yield { type: 'done' } as AgentEvent
+    return
+  }
   if (!created.ok) throw new RemoteAgentError('Agent backend rejected the job: ' + created.status, created.status)
   const info = (await created.json()) as { jobId: string; streamUrl: string; statusUrl: string }
   activeJobId = info.jobId

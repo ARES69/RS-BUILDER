@@ -12,6 +12,7 @@ import { runEvents } from '../../server/engine.mjs'
 import { parseRuntimeKeys } from '../../server/orchestrator.mjs'
 import { createJob, getJob, jobStoreKind } from '../../server/jobstore.mjs'
 import { sessionFromRequest } from '../../server/auth.mjs'
+import { MIN_RUN_CREDITS, balance } from '../../server/credits.mjs'
 import { kickWorker, workerOrigin } from '../../server/worker.mjs'
 import { reapStaleJobs } from '../../server/reaper.mjs'
 
@@ -59,6 +60,14 @@ export default async function handler(req, res) {
       return
     }
     reapStaleJobs().catch(() => null)
+    const ownerIdEarly = sessionFromRequest(req)
+    if (ownerIdEarly) {
+      const bal = await balance(ownerIdEarly).catch(() => null)
+      if (bal !== null && bal < MIN_RUN_CREDITS) {
+        res.status(402).json({ error: 'insufficient credits', balance: bal, min: MIN_RUN_CREDITS })
+        return
+      }
+    }
     let lineageRoot = null
     let seedFiles = null
     if (payload.parentJobId) {

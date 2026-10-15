@@ -245,6 +245,45 @@ let recoveryCodes = null
   report(anon.statusCode === 401, 'history without session → 401')
 }
 
+/* --- credits: grant, metering, gating ---------------------------------- */
+const creditsHandler = (await import('../api/v1/credits.mjs')).default
+const { addLedgerEntry } = await import('../server/credits.mjs')
+let balanceBefore = null
+{
+  const res = mockRes()
+  await meHandler(mockReq('GET', null, { headers: { cookie } }), res)
+  const me = JSON.parse(res.chunks.join(''))
+  balanceBefore = me.user.credits
+  const cres = mockRes()
+  await creditsHandler(mockReq('GET', null, { headers: { cookie } }), cres)
+  const led = JSON.parse(cres.chunks.join(''))
+  report(led.entries.some((e) => e.delta === 500 && e.reason === 'signup-grant'), 'signup grant of 500 credits is in the ledger')
+}
+{
+  const res = mockRes()
+  await handler(mockReq('POST', { prompt: 'Кредитный прогон', locale: 'ru', mode: 'queue' }, { headers: { cookie } }), res)
+  const cid = JSON.parse(res.chunks.join('')).jobId
+  const cjob = await getJob(cid)
+  await workerHandler(mockReq('POST', { jobId: cid, kickToken: cjob.kickToken }), res)
+  const done = await getJob(cid)
+  const spent = [...done.events].reverse().find((e) => e.type === 'progress')?.credits ?? 0
+  const cres = mockRes()
+  await creditsHandler(mockReq('GET', null, { headers: { cookie } }), cres)
+  const led = JSON.parse(cres.chunks.join(''))
+  report(led.balance === balanceBefore - spent && led.entries.some((e) => e.reason.startsWith('run:')), 'finished run debited its engine credits → ' + balanceBefore + ' − ' + spent + ' = ' + led.balance)
+}
+{
+  const uid = (JSON.parse((() => { const r = mockRes(); return r.chunks.join('') })() || '{}') || {}).id
+  const meRes = mockRes()
+  await meHandler(mockReq('GET', null, { headers: { cookie } }), meRes)
+  const userId = JSON.parse(meRes.chunks.join('')).user.id
+  await addLedgerEntry(userId, -100000, 'test-drain')
+  const gres = mockRes()
+  await handler(mockReq('POST', { prompt: 'Запуск без кредитов', locale: 'ru', mode: 'queue' }, { headers: { cookie } }), gres)
+  report(gres.statusCode === 402, 'queued run with an empty balance → 402 (got ' + gres.statusCode + ')')
+  await addLedgerEntry(userId, 200000, 'test-topup') // refill for the sections below
+}
+
 /* --- hosted artifacts: publish, versions, continue-lineage ------------- */
 process.env.RSB_ARTIFACT_DIR = join(process.env.RSB_JOB_DIR, 'artifacts')
 const { getManifest } = await import('../server/artifacts.mjs')

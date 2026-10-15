@@ -11,6 +11,7 @@
 import { getJob, putJob } from './jobstore.mjs'
 import { appendRunHistory } from './history.mjs'
 import { publishArtifact } from './artifacts.mjs'
+import { debitRun } from './credits.mjs'
 import { runEvents } from './engine.mjs'
 
 const BATCH_MS = 400
@@ -105,7 +106,10 @@ export async function processJob(jobId) {
       return { ok: true, reason: 'cancelled' }
     }
     await flush({ status: 'done' })
-    if (job.ownerId) await appendRunHistory(job.ownerId, job).catch(() => {})
+    if (job.ownerId) {
+      await appendRunHistory(job.ownerId, job).catch(() => {})
+      await debitRun(job.ownerId, job).catch(() => {})
+    }
     return { ok: true, reason: 'done' }
   } catch (error) {
     await flush({ status: 'failed', error: String(error?.message ?? error) }).catch(() => {})

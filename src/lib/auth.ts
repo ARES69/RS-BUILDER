@@ -6,7 +6,7 @@
  */
 import { AGENT_API_URL } from './remoteAgent'
 
-export type SessionUser = { id: string; email: string }
+export type SessionUser = { id: string; email: string; credits?: number | null }
 
 const base = () => (AGENT_API_URL ?? '').replace(/\/$/, '')
 
@@ -57,6 +57,13 @@ export async function logIn(email: string, password: string): Promise<{ user?: S
 
 export async function logOut(): Promise<void> {
   await call('/v1/auth?action=logout', { method: 'POST' })
+}
+
+export type LedgerEntry = { t: number; delta: number; reason: string; jobId: string | null }
+
+export async function fetchCredits(): Promise<{ balance: number; entries: LedgerEntry[] } | null> {
+  const r = await call<{ balance: number; entries: LedgerEntry[] }>('/v1/credits')
+  return r.ok && r.json ? { balance: r.json.balance, entries: r.json.entries } : null
 }
 
 export type HistoryEntry = {

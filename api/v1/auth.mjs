@@ -8,6 +8,7 @@
 import { changePassword, consumeRecoveryCode, createUser, findUserByEmail, findUserById, issueRecoveryCodes, verifyLogin } from '../../server/users.mjs'
 import { clearSessionCookie, sessionCookie, signSession, sessionFromRequest, validEmail, verifyPassword } from '../../server/auth.mjs'
 import { LIMITS, clientIp, hashBucket, rateHit } from '../../server/ratelimit.mjs'
+import { balance, grantSignupCredits } from '../../server/credits.mjs'
 
 async function readBody(req) {
   let body = ''
@@ -39,7 +40,8 @@ export default async function handler(req, res) {
     const uid = sessionFromRequest(req)
     const user = uid ? await findUserById(uid) : null
     if (!user) return res.status(401).json({ error: 'not signed in' })
-    return res.status(200).json({ user: { id: user.id, email: user.email } })
+    const credits = await balance(uid).catch(() => null)
+    return res.status(200).json({ user: { id: user.id, email: user.email, credits } })
   }
 
   if (req.method !== 'POST') return res.status(405).json({ error: 'use POST' })
@@ -56,6 +58,7 @@ export default async function handler(req, res) {
     if (password.length < 8) return res.status(400).json({ error: 'password must be at least 8 characters' })
     if (await findUserByEmail(email)) return res.status(409).json({ error: 'email already registered' })
     const user = await createUser(email, password)
+    await grantSignupCredits(user.id).catch(() => {})
     const codes = await issueRecoveryCodes(user).catch(() => [])
     const session = signSession(user.id)
     if (!session) return res.status(503).json({ error: 'auth is not configured on this deployment (RSB_SESSION_SECRET missing)' })
