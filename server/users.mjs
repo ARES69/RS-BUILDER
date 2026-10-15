@@ -1,6 +1,6 @@
 /** User documents in the Blob store: rsb-users/<sha256(email)>. */
 import { createHash, randomBytes } from 'node:crypto'
-import { getJobDoc, putJobDoc } from './jobstore.mjs'
+import { getJobDoc, listDocs, putJobDoc } from './jobstore.mjs'
 import { hashPassword, verifyPassword } from './auth.mjs'
 
 const path = (email) => 'rsb-users/' + createHash('sha256').update(String(email).toLowerCase().trim()).digest('hex').slice(0, 32)
@@ -17,19 +17,48 @@ export async function findUserById(id) {
   return doc && doc.createdAt === Number(createdAt) ? doc : null
 }
 
+const credPath = (userHash) => 'rsb-cred/' + userHash
+
+/** Credentials live in append-only docs (one write each): overwritten blob
+ *  paths read stale for a while, single-write paths do not. */
+async function issueCred(userHash, password) {
+  const { salt, hash } = hashPassword(password)
+  await putJobDoc(credPath(userHash) + '/' + Date.now(), { salt, hash })
+  return { salt, hash }
+}
+
+async function latestCred(userHash) {
+  const docs = await listDocs(credPath(userHash) + '/')
+  if (!docs.length) return null
+  docs.sort((a, b) => Number(a.split('/').pop()) - Number(b.split('/').pop()))
+  return getJobDoc(docs[docs.length - 1])
+}
+
 export async function createUser(email, password) {
   const normalized = String(email).toLowerCase().trim()
-  const { salt, hash } = hashPassword(password)
   const p = path(normalized)
+  const hashOf = p.replace(/^rsb-users\//, '')
+  const { salt, hash } = await issueCred(hashOf, password)
   const doc = {
     id: p + ':' + Date.now(),
     email: normalized,
     salt,
-    hash,
+    hash, // bootstrap copy; the credential docs are the source of truth
     createdAt: Date.now(),
   }
   await putJobDoc(p, doc)
   return doc
+}
+
+/** Verifies against the newest credential doc (fresh single-write reads). */
+export async function verifyLogin(email, password) {
+  const user = await findUserByEmail(email)
+  if (!user) return null
+  const hashOf = String(user.id).split(':')[0].replace(/^rsb-users\//, '')
+  const cred = await latestCred(hashOf)
+  if (cred && verifyPassword(password, cred.salt, cred.hash)) return user
+  if (verifyPassword(password, user.salt, user.hash)) return user
+  return null
 }
 
 export const newUserId = () => 'u_' + randomBytes(8).toString('hex')
@@ -63,11 +92,8 @@ export async function consumeRecoveryCode(user, code) {
 }
 
 export async function changePassword(user, newPassword) {
-  const p = String(user.id).split(':')[0]
-  const { salt, hash } = hashPassword(newPassword)
-  const doc = { ...user, salt, hash }
-  await putJobDoc(p, doc)
-  return doc
+  const hashOf = String(user.id).split(':')[0].replace(/^rsb-users\//, '')
+  return issueCred(hashOf, newPassword)
 }
 
 export const verifyUserPassword = (user, password) => verifyPassword(password, user.salt, user.hash)

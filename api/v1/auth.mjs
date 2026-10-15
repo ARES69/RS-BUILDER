@@ -5,7 +5,7 @@
  *   POST /api/v1/auth?action=logout
  *   GET  /api/v1/auth?action=me
  */
-import { changePassword, consumeRecoveryCode, createUser, findUserByEmail, findUserById, issueRecoveryCodes } from '../../server/users.mjs'
+import { changePassword, consumeRecoveryCode, createUser, findUserByEmail, findUserById, issueRecoveryCodes, verifyLogin } from '../../server/users.mjs'
 import { clearSessionCookie, sessionCookie, signSession, sessionFromRequest, validEmail, verifyPassword } from '../../server/auth.mjs'
 import { LIMITS, clientIp, hashBucket, rateHit } from '../../server/ratelimit.mjs'
 
@@ -85,8 +85,8 @@ export default async function handler(req, res) {
       (await rateHit('login:' + hashBucket(email), LIMITS.loginPerEmail)) &&
       (await rateHit('loginip:' + hashBucket(ip), LIMITS.loginPerIp))
     if (!allowed) return res.status(429).json({ error: 'rate limited' })
-    const user = await findUserByEmail(email)
-    if (!user || !verifyPassword(String(payload.password ?? ''), user.salt, user.hash)) {
+    const user = await verifyLogin(email, String(payload.password ?? ''))
+    if (!user) {
       return res.status(401).json({ error: 'wrong email or password' })
     }
     const session = signSession(user.id)

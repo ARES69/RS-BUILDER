@@ -205,6 +205,7 @@ let recoveryCodes = null
     last = mockRes()
     await loginHandler(mockReq('POST', { email: rlEmail, password: 'nope12345' }), last)
   }
+  // per-ip bucket is shared ('unknown' in mocks): stay under loginPerIp elsewhere
   report(last.statusCode === 429, '7th login attempt in the 10-min window → 429 (got ' + last.statusCode + ')')
 }
 {
