@@ -5,8 +5,9 @@
  *   POST /api/v1/auth?action=logout
  *   GET  /api/v1/auth?action=me
  */
-import { createUser, findUserByEmail, findUserById } from '../../server/users.mjs'
+import { changePassword, consumeRecoveryCode, createUser, findUserByEmail, findUserById, issueRecoveryCodes } from '../../server/users.mjs'
 import { clearSessionCookie, sessionCookie, signSession, sessionFromRequest, validEmail, verifyPassword } from '../../server/auth.mjs'
+import { LIMITS, clientIp, hashBucket, rateHit } from '../../server/ratelimit.mjs'
 
 async function readBody(req) {
   let body = ''
@@ -47,18 +48,44 @@ export default async function handler(req, res) {
   if (action === 'signup') {
     const email = String(payload.email ?? '')
     const password = String(payload.password ?? '')
+    const ip = clientIp(req)
+    if (!(await rateHit('signupip:' + hashBucket(ip), LIMITS.signupPerIp))) {
+      return res.status(429).json({ error: 'rate limited' })
+    }
     if (!validEmail(email)) return res.status(400).json({ error: 'invalid email' })
     if (password.length < 8) return res.status(400).json({ error: 'password must be at least 8 characters' })
     if (await findUserByEmail(email)) return res.status(409).json({ error: 'email already registered' })
     const user = await createUser(email, password)
+    const codes = await issueRecoveryCodes(user).catch(() => [])
     const session = signSession(user.id)
     if (!session) return res.status(503).json({ error: 'auth is not configured on this deployment (RSB_SESSION_SECRET missing)' })
     res.setHeader('Set-Cookie', sessionCookie(session.token, session.exp))
-    return res.status(201).json({ user: { id: user.id, email: user.email } })
+    return res.status(201).json({ user: { id: user.id, email: user.email }, recoveryCodes: codes })
+  }
+
+  if (action === 'reset') {
+    const email = String(payload.email ?? '')
+    if (!(await rateHit('reset:' + hashBucket(email), LIMITS.resetPerEmail))) {
+      return res.status(429).json({ error: 'rate limited' })
+    }
+    const user = await findUserByEmail(email)
+    const password = String(payload.password ?? '')
+    // user-or-code failure is indistinguishable on purpose
+    if (!user || password.length < 8 || !(await consumeRecoveryCode(user, payload.code))) {
+      return res.status(401).json({ error: 'invalid email or recovery code' })
+    }
+    await changePassword(user, password)
+    return res.status(200).json({ ok: true })
   }
 
   if (action === 'login') {
-    const user = await findUserByEmail(String(payload.email ?? ''))
+    const email = String(payload.email ?? '')
+    const ip = clientIp(req)
+    const allowed =
+      (await rateHit('login:' + hashBucket(email), LIMITS.loginPerEmail)) &&
+      (await rateHit('loginip:' + hashBucket(ip), LIMITS.loginPerIp))
+    if (!allowed) return res.status(429).json({ error: 'rate limited' })
+    const user = await findUserByEmail(email)
     if (!user || !verifyPassword(String(payload.password ?? ''), user.salt, user.hash)) {
       return res.status(401).json({ error: 'wrong email or password' })
     }

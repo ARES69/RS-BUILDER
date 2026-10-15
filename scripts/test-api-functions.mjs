@@ -174,11 +174,38 @@ const historyRunHandler = (req, res) => historyRunHandlerBase(req, res)
 
 const email = 'tester+' + Date.now() + '@rs-builder.app'
 let cookie = null
+let recoveryCodes = null
 {
   const res = mockRes()
   await signupHandler(mockReq('POST', { email, password: 'supersecret1' }), res)
   cookie = res.headers['set-cookie']
+  recoveryCodes = JSON.parse(res.chunks.join('')).recoveryCodes
   report(res.statusCode === 201 && Boolean(cookie) && res.chunks.join('').includes(email), 'POST /auth/signup → 201 + session cookie')
+}
+{
+  report(Array.isArray(recoveryCodes) && recoveryCodes.length === 3 && /^([a-f0-9]{4}-){2}[a-f0-9]{4}$/.test(recoveryCodes[0]), 'signup issues 3 one-time recovery codes → ' + JSON.stringify(recoveryCodes))
+  const resetReq = (body) => authHandler(Object.assign(mockReq('POST', body), { query: { action: 'reset' } }), )
+  let r = mockRes()
+  await authHandler(Object.assign(mockReq('POST', { email, code: '0000-0000-0000', password: 'newpass123' }), { query: { action: 'reset' } }), r)
+  report(r.statusCode === 401, 'reset with a wrong code → 401')
+  r = mockRes()
+  await authHandler(Object.assign(mockReq('POST', { email, code: recoveryCodes[0], password: 'newpass123' }), { query: { action: 'reset' } }), r)
+  report(r.statusCode === 200, 'reset with a valid code → 200')
+  r = mockRes()
+  await loginHandler(mockReq('POST', { email, password: 'newpass123' }), r)
+  report(r.statusCode === 200, 'login works with the new password')
+  r = mockRes()
+  await authHandler(Object.assign(mockReq('POST', { email, code: recoveryCodes[0], password: 'another123' }), { query: { action: 'reset' } }), r)
+  report(r.statusCode === 401, 'the same recovery code cannot be reused → 401')
+}
+{
+  const rlEmail = 'rl+' + Date.now() + '@rs-builder.app'
+  let last = null
+  for (let i = 0; i < 7; i++) {
+    last = mockRes()
+    await loginHandler(mockReq('POST', { email: rlEmail, password: 'nope12345' }), last)
+  }
+  report(last.statusCode === 429, '7th login attempt in the 10-min window → 429 (got ' + last.statusCode + ')')
 }
 {
   const res = mockRes()

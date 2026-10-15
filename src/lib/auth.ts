@@ -31,12 +31,20 @@ export async function fetchMe(): Promise<SessionUser | null> {
   return r.ok && r.json?.user ? r.json.user : null
 }
 
-export async function signUp(email: string, password: string): Promise<{ user?: SessionUser; error?: string }> {
-  const r = await call<{ user: SessionUser; error?: string }>('/v1/auth?action=signup', {
+export async function signUp(email: string, password: string): Promise<{ user?: SessionUser; recoveryCodes?: string[]; error?: string }> {
+  const r = await call<{ user: SessionUser; recoveryCodes?: string[]; error?: string }>('/v1/auth?action=signup', {
     method: 'POST',
     body: JSON.stringify({ email, password }),
   })
-  return r.ok ? { user: r.json?.user } : { error: r.json?.error || 'network' }
+  return r.ok ? { user: r.json?.user, recoveryCodes: r.json?.recoveryCodes } : { error: r.json?.error || 'network' }
+}
+
+export async function resetPassword(email: string, code: string, password: string): Promise<{ ok?: boolean; error?: string }> {
+  const r = await call<{ ok?: boolean; error?: string }>('/v1/auth?action=reset', {
+    method: 'POST',
+    body: JSON.stringify({ email, code, password }),
+  })
+  return r.ok ? { ok: true } : { error: r.json?.error || 'network' }
 }
 
 export async function logIn(email: string, password: string): Promise<{ user?: SessionUser; error?: string }> {
