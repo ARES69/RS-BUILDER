@@ -72,6 +72,7 @@ export const en = {
     liveBoardLive: 'answers right now',
     liveBoardCooling: 'cooling down (quota)',
     liveBoardArtifact: 'Real artifact of a real run',
+    galleryTitle: 'Gallery of real runs',
     badge: 'Autonomous build agent',
     titleA: 'What should I',
     titleB: 'build for you?',

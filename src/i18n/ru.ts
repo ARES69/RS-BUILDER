@@ -74,6 +74,7 @@ export const ru: Dict = {
     liveBoardLive: 'отвечает прямо сейчас',
     liveBoardCooling: 'в кулдауне (квота)',
     liveBoardArtifact: 'Настоящий артефакт настоящего прогона',
+    galleryTitle: 'Галерея настоящих прогонов',
     badge: 'Автономный агент-сборщик',
     titleA: 'Что мне для вас',
     titleB: 'собрать?',

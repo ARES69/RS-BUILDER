@@ -82,6 +82,30 @@ export async function fetchHistory(): Promise<HistoryEntry[]> {
   return r.ok && Array.isArray(r.json?.runs) ? r.json.runs : []
 }
 
+export type GalleryEntry = {
+  jobId: string
+  prompt: string
+  pageUrl: string
+  model: string | null
+  version: number
+  createdAt: number
+}
+
+/** Public gallery of real hosted artifacts (no auth needed). */
+export async function fetchGallery(): Promise<GalleryEntry[]> {
+  const r = await call<{ gallery: GalleryEntry[] }>('/v1/artifacts?public=1')
+  return r.ok && Array.isArray(r.json?.gallery) ? r.json.gallery : []
+}
+
+export async function fetchGalleryHtml(url: string): Promise<string | null> {
+  try {
+    const response = await fetch(url)
+    return response.ok ? await response.text() : null
+  } catch {
+    return null
+  }
+}
+
 export async function fetchHistoryRun(jobId: string): Promise<{ events?: unknown[] } | null> {
   const r = await call<{ events: unknown[] }>('/v1/history?id=' + encodeURIComponent(jobId))
   return r.ok && r.json ? r.json : null

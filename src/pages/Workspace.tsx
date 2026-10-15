@@ -14,7 +14,7 @@ import { ThemeToggle } from '@/components/layout/ThemeToggle'
 import { AGENT_API_URL, fetchBackendStatus, remoteEnabled, type BackendStatus } from '@/lib/remoteAgent'
 import { SettingsPanel } from '@/components/workspace/SettingsPanel'
 import { AuthModal } from '@/components/workspace/AuthModal'
-import { fetchCredits, fetchHistory, fetchHistoryRun, fetchMe, logOut, type HistoryEntry, type SessionUser } from '@/lib/auth'
+import { fetchCredits, fetchGallery, fetchGalleryHtml, fetchHistory, fetchHistoryRun, fetchMe, logOut, type GalleryEntry, type HistoryEntry, type SessionUser } from '@/lib/auth'
 import type { AgentEvent } from '@/lib/agent'
 import { LanguageSwitcher } from '@/components/layout/LanguageSwitcher'
 
@@ -67,11 +67,27 @@ export default function Workspace() {
       Boolean(backend.providers?.length) === false ||
       (backend.providers ?? []).every((id) => cooldownNow(backend?.cooldowns?.[id])))
   const [params] = useSearchParams()
-  const { state, start, stop, reset, replay } = useAgentRun()
+  const { state, start, stop, reset, replay, previewExternal } = useAgentRun()
   const [user, setUser] = useState<SessionUser | null>(null)
   const [authOpen, setAuthOpen] = useState(false)
   const [history, setHistory] = useState<HistoryEntry[]>([])
   const [continueFrom, setContinueFrom] = useState<string | null>(null)
+  const [gallery, setGallery] = useState<GalleryEntry[]>([])
+
+  useEffect(() => {
+    fetchGallery().then(setGallery)
+  }, [])
+
+  const openGallery = useCallback(
+    async (entry: GalleryEntry) => {
+      const html = await fetchGalleryHtml(entry.pageUrl)
+      if (!html) return
+      setMobileView('panel')
+      setTab('preview')
+      previewExternal(html, entry.pageUrl, entry.prompt.slice(0, 60) || 'RS-BUILDER artifact')
+    },
+    [previewExternal],
+  )
 
   const refreshHistory = useCallback(() => {
     fetchHistory().then(setHistory)
@@ -337,6 +353,28 @@ export default function Workspace() {
               </button>
             )}
           </div>
+
+          {gallery.length > 0 && (
+            <div className="max-h-48 overflow-y-auto border-t border-line px-3 py-2">
+              <p className="eyebrow mb-1.5 flex items-center gap-1.5">
+                <Sparkles size={11} /> {t('app.galleryTitle')}
+              </p>
+              <div className="flex flex-col gap-1">
+                {gallery.slice(0, 8).map((g) => (
+                  <button
+                    key={g.jobId}
+                    type="button"
+                    onClick={() => openGallery(g)}
+                    title={g.model ?? undefined}
+                    className="rounded-lg border border-line bg-surface/40 px-2 py-1.5 text-left transition-colors hover:border-cyan/40"
+                  >
+                    <span className="block truncate text-[11.5px] text-fg">{g.prompt}</span>
+                    <span className="mt-0.5 block truncate font-mono text-[10px] text-faint">{g.model ?? 'live run'} · v{g.version}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
 
           <div className="border-t border-line p-3">
             <p className="rounded-xl border border-line bg-surface/60 px-3 py-2.5 text-[11.5px] leading-snug text-faint">

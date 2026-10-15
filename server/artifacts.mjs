@@ -97,7 +97,34 @@ export async function publishArtifact(job, artifact) {
     files,
   })
   const versions = before + 1
+
+  // public gallery entry: real runs the product can show off inside the
+  // workspace sandbox (prompt excerpt + urls only, no secrets)
+  const modelEvent = (job.events || []).find((e) => e.type === 'model')
+  await putJobDoc('rsb-gallery/' + job.id, {
+    jobId: job.id,
+    prompt: String(job.prompt ?? '').slice(0, 140),
+    locale: job.locale,
+    pageUrl,
+    root,
+    version,
+    model: modelEvent?.model ?? null,
+    createdAt: Date.now(),
+  }).catch(() => {})
+
   return { root, version, pageUrl, files, versions }
+}
+
+/** Public gallery of real hosted artifacts (newest first, capped). */
+export async function publicGallery(limit = 20) {
+  const paths = await listDocs('rsb-gallery/')
+  const entries = []
+  for (const p of paths) {
+    const doc = await getJobDoc(p)
+    if (doc?.pageUrl) entries.push(doc)
+  }
+  entries.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0))
+  return entries.slice(0, limit)
 }
 
 /** Builds the lineage manifest from version docs (newest last). */

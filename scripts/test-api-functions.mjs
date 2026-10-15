@@ -355,6 +355,10 @@ const artifactsHandler = (await import('../api/v1/artifacts.mjs')).default
   const anon = mockRes()
   await artifactsHandler(mockReq('GET', null, { query: { root: jobId } }), anon)
   report(anon.statusCode === 401, 'manifest without session → 401')
+  const pub = mockRes()
+  await artifactsHandler(mockReq('GET', null, { query: { public: '1' } }), pub)
+  const gal = JSON.parse(pub.chunks.join(''))
+  report(pub.statusCode === 200 && gal.gallery.length >= 2 && gal.gallery.every((g) => g.pageUrl && !('kickToken' in g)), 'public gallery lists real artifacts without auth → ' + gal.gallery.length)
 }
 
 mockLlm.close()

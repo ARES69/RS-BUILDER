@@ -122,6 +122,25 @@ export function useAgentRun() {
     [locale, t],
   )
 
+  /** Opens an external hosted artifact (gallery) in the preview sandbox. */
+  const previewExternal = useCallback((html: string, pageUrl: string, title: string) => {
+    controller.current?.abort()
+    controller.current = null
+    setState({
+      ...initialRunState,
+      status: 'done',
+      artifact: {
+        kind: 'html',
+        title: { en: title, ru: title },
+        fileName: 'artifact.html',
+        html,
+        note: { en: 'From the gallery of real runs', ru: 'Из галереи настоящих прогонов' },
+        downloads: [],
+      },
+      artifactMeta: { root: pageUrl, version: 1, versions: 1, pageUrl, files: [{ name: 'index.html', url: pageUrl }] },
+    })
+  }, [])
+
   /** Replays a persisted run (history) into the thread without a new execution. */
   const replay = useCallback((events: AgentEvent[]) => {
     controller.current?.abort()
@@ -132,5 +151,5 @@ export function useAgentRun() {
 
   useEffect(() => () => controller.current?.abort(), [])
 
-  return { state, start, stop, reset, replay }
+  return { state, start, stop, reset, replay, previewExternal }
 }
