@@ -45,8 +45,10 @@ export async function appendRunHistory(userId, job) {
     ].slice(0, MAX_ENTRIES)
     doc.updatedAt = Date.now()
     await putJobDoc(indexPath(userId), doc)
+    console.error('HIST-PUT', userId.slice(-8), 'runs=' + doc.runs.map((r) => r.jobId.slice(-4)).join('+'))
     return doc
-  } catch {
+  } catch (error) {
+    console.error('HIST-FAIL', userId.slice(-8), String(error?.message ?? error))
     return null
   }
 }
@@ -55,6 +57,7 @@ export async function listRunHistory(userId) {
   if (!userId) return []
   try {
     const doc = await readIndex(userId)
+    console.error('HIST-LIST', userId.slice(-8), 'runs=' + (doc.runs ?? []).map((r) => r.jobId.slice(-4)).join('+'))
     return doc.runs ?? []
   } catch {
     return []
