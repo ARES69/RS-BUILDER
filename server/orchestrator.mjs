@@ -299,7 +299,9 @@ const KEYED_PROVIDERS = {
   groq: {
     base: 'https://api.groq.com/openai/v1',
     key: 'GROQ_API_KEY',
-    models: ['llama-3.3-70b-versatile', 'openai/gpt-oss-120b', 'qwen/qwen3-32b', 'meta-llama/llama-4-scout-17b-16e-instruct'],
+    // live catalog 2026-10-15: the old llama-3.3-versatile lineup is retired;
+    // gpt-oss/qwen are the tool-capable free-tier models now
+    models: ['openai/gpt-oss-120b', 'qwen/qwen3.8-27b', 'openai/gpt-oss-20b'],
   },
   gemini: {
     base: 'https://generativelanguage.googleapis.com/v1beta/openai',
