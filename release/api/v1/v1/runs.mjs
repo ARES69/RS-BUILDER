@@ -70,11 +70,15 @@ export default async function handler(req, res) {
     }
     let lineageRoot = null
     let seedFiles = null
+    let seedTurns = null
+    let seedBinaries = null
     if (payload.parentJobId) {
       const parent = await getJob(String(payload.parentJobId))
       const owner = sessionFromRequest(req)
       if (parent && (!parent.ownerId || parent.ownerId === owner)) {
         lineageRoot = parent.lineageRoot || parent.id
+        seedTurns = parent.checkpoint?.turns ?? null
+        seedBinaries = parent.checkpoint?.binaries ?? null
         seedFiles = {}
         for (const e of parent.events || []) {
           if (e.type === 'file' && e.file?.path && typeof e.file.content === 'string') seedFiles[e.file.path] = e.file.content
@@ -92,6 +96,8 @@ export default async function handler(req, res) {
       ownerId: sessionFromRequest(req) || undefined,
       lineageRoot,
       seedFiles,
+      seedTurns,
+      seedBinaries,
     })
     kickWorker(workerOrigin(), job)
     // The kick fetch must be dispatched while this invocation is still alive:

@@ -286,6 +286,7 @@ export const en = {
     preview: 'Preview',
     console: 'Console',
     composerPlaceholder: 'Describe the deliverable you want…',
+    composerContinue: 'Refine or continue — the agent remembers the context and files…',
     send: 'Send',
     stop: 'Stop',
     running: 'Running',

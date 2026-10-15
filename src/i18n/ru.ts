@@ -288,6 +288,7 @@ export const ru: Dict = {
     preview: 'Превью',
     console: 'Консоль',
     composerPlaceholder: 'Опишите, какой артефакт вам нужен…',
+    composerContinue: 'Уточни или продолжи — агент помнит контекст и файлы…',
     send: 'Отправить',
     stop: 'Остановить',
     running: 'Выполняется',
