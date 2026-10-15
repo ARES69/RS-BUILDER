@@ -19,6 +19,27 @@ import { reapStaleJobs } from '../../server/reaper.mjs'
 /** Queued runs need a durable store: Vercel Blob on Vercel, fs elsewhere. */
 const queueAvailable = () => jobStoreKind() === 'blob' || !process.env.VERCEL
 
+/**
+ * Conversation condensation for follow-ups: inherited dialogues easily exceed
+ * free-tier TPM windows (groq 413 at ~8k tokens). Old tool payloads carry the
+ * bulk — truncate them and cap the window; the workspace files (not the log)
+ * are the source of truth for the artifact state.
+ */
+function compressTurns(turns) {
+  if (!Array.isArray(turns) || !turns.length) return null
+  const kept = turns.slice(-28)
+  const cutAt = Math.max(0, kept.length - 8)
+  return kept.map((m, i) => {
+    if (i < cutAt && m.role === 'tool') {
+      return { ...m, results: (m.results ?? []).map((r) => ({ ...r, text: String(r.text ?? '').slice(0, 240) + ' …' })) }
+    }
+    if (i < cutAt && m.role === 'assistant' && typeof m.content === 'string' && m.content.length > 400) {
+      return { ...m, content: m.content.slice(0, 400) + ' …' }
+    }
+    return m
+  })
+}
+
 export const config = {
   runtime: 'nodejs',
   maxDuration: 300, // long runs stream for minutes, not seconds
@@ -77,7 +98,7 @@ export default async function handler(req, res) {
       const owner = sessionFromRequest(req)
       if (parent && (!parent.ownerId || parent.ownerId === owner)) {
         lineageRoot = parent.lineageRoot || parent.id
-        seedTurns = parent.checkpoint?.turns ?? null
+        seedTurns = compressTurns(parent.checkpoint?.turns)
         seedBinaries = parent.checkpoint?.binaries ?? null
         seedFiles = {}
         for (const e of parent.events || []) {
