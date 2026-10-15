@@ -67,6 +67,13 @@ function llmMockServer(port, { models, recordAuth } = {}) {
         res.setHeader('content-type', 'application/json')
         return res.end(JSON.stringify({ error: { message: 'User not found.', code: 401 } }))
       }
+      if (payload.model === 'min-limit' && !hits['min-limit-429-served']) {
+        hits['min-limit-429-served'] = 1
+        res.statusCode = 429
+        res.setHeader('content-type', 'application/json')
+        res.setHeader('retry-after', '1')
+        return res.end(JSON.stringify({ error: { message: 'Rate limit reached for model', code: 429 } }))
+      }
       if (payload.model === 'parse-flaky' && !hits['parse-flaky-400-served']) {
         hits['parse-flaky-400-served'] = 1
         res.statusCode = 400
@@ -171,6 +178,11 @@ process.env.RSB_LLM_MODEL_CHAIN = 'parse-flaky'
 const flaky = await collect('One welcome screen', 'en')
 check(flaky.model === 'openrouter/parse-flaky' && openRouterMock.hits['parse-flaky-400-served'] === 1 && flaky.events.some((e) => e.type === 'plan'), '400 failed_generation retried once on the same model, run survives → calls=' + openRouterMock.hits['parse-flaky'])
 process.env.RSB_LLM_MODEL_CHAIN = 'dead-key-model, broken-model, mock-model'
+
+/* --- A4: per-minute 429 waits retry-after and retries same model ------ */
+process.env.RSB_LLM_MODEL_CHAIN = 'min-limit'
+const waited = await collect('One welcome screen', 'en')
+check(waited.model === 'openrouter/min-limit' && openRouterMock.hits['min-limit-429-served'] === 1 && waited.events.some((e) => e.type === 'plan'), '429 with retry-after waited and retried on the same model → ' + waited.model)
 
 /* --- B: anonymous OpenCode-Zen-style provider ------------------------ */
 delete process.env.OPENAI_API_KEY
