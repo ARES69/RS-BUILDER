@@ -62,7 +62,13 @@ export async function processJob(jobId) {
   let chained = false
   let cancelled = false
   try {
-    for await (const event of runEvents(job.prompt, job.locale, controller.signal, { seedFiles: job.seedFiles })) {
+    for await (const event of runEvents(job.prompt, job.locale, controller.signal, {
+      seedFiles: job.seedFiles,
+      checkpoint: job.checkpoint,
+      onCheckpoint: (cpState) => {
+        job.checkpoint = cpState
+      },
+    })) {
       const fresh = await getJob(jobId)
       if (!fresh || fresh.status === 'cancelled') {
         cancelled = true

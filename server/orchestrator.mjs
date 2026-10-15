@@ -805,13 +805,76 @@ export async function* runOrchestrated(prompt, locale, signal, runtime) {
 
   const alive = () => !signal?.aborted && Date.now() < deadline
 
-  yield { type: 'run_start', runId, model: entries.slice(0, 3).map((e) => e.id + '/' + e.model).join(' → ') + (entries.length > 3 ? ' → …(' + entries.length + ' total)' : '') }
-  yield { type: 'message', role: 'user', text: both(String(prompt)) }
-
   /* --- planning turn ------------------------------------------------ */
   let plan = null
   let intro = null
   let usedModel = null
+
+  /* --- v2 checkpoints: resume a run on a fresh invocation ------------- */
+  const cp = runtime?.checkpoint && runtime.checkpoint.v === 2 ? runtime.checkpoint : null
+  let startStep = 0
+  let credits = 0
+  if (cp) {
+    turns.length = 0
+    for (const m of cp.turns || []) turns.push(m)
+    for (const [p2, c2] of cp.files || []) files.set(p2, c2)
+    for (const [n2, b64] of cp.binaries || []) binaries.set(n2, Buffer.from(b64, 'base64'))
+    plan = cp.plan ?? null
+    intro = cp.intro ?? null
+    startStep = cp.stepIndex ?? 0
+    totalCalls = cp.totalCalls ?? 0
+    credits = cp.credits ?? 0
+    usedModel = cp.usedModel ?? null
+  }
+  const checkpoint = (stepIndex, phase) => {
+    if (typeof runtime?.onCheckpoint !== 'function') return
+    let cpTurns = turns
+    try {
+      const snap = {
+        v: 2,
+        phase,
+        turns: cpTurns,
+        plan: plan ?? null,
+        intro: intro ?? null,
+        stepIndex,
+        totalCalls,
+        credits,
+        usedModel,
+        files: [...files.entries()],
+        binaries: [...binaries.entries()].map(([n, b]) => [n, Buffer.from(b).toString('base64')]),
+      }
+      // keep the checkpoint doc bounded: prune old tool-result payloads
+      let json = JSON.stringify(snap)
+      if (json.length > 1_500_000) {
+        const keep = 12
+        snap.turns = turns.map((m, i) =>
+          i < turns.length - keep && m.role === 'tool'
+            ? { ...m, results: (m.results ?? []).map((r) => ({ ...r, text: String(r.text ?? '').slice(0, 300) + ' …[pruned]' })) }
+            : m,
+        )
+        json = JSON.stringify(snap)
+        if (json.length > 1_500_000) return
+      }
+      runtime.onCheckpoint(snap)
+    } catch {
+      /* checkpointing is best-effort */
+    }
+  }
+  if (!cp) {
+    yield { type: 'run_start', runId, model: entries.slice(0, 3).map((e) => e.id + '/' + e.model).join(' → ') + (entries.length > 3 ? ' → …(' + entries.length + ' total)' : '') }
+    yield { type: 'message', role: 'user', text: both(String(prompt)) }
+  }
+  if (cp && plan) {
+    yield {
+      type: 'message',
+      role: 'agent',
+      text: L(
+        'Long run: resuming on a fresh worker invocation from step ' + (startStep + 1) + ' of ' + plan.length + '.',
+        'Длинный прогон: продолжаю на новой инвокации воркера с шага ' + (startStep + 1) + ' из ' + plan.length + '.',
+      ),
+    }
+  }
+
   for (let attempt = 0; attempt < 3 && !plan && alive(); attempt++) {
     const reply = await chat(entries, systemPrompt(locale), turns, signal)
     if (!usedModel && reply.model) {
@@ -847,14 +910,16 @@ export async function* runOrchestrated(prompt, locale, signal, runtime) {
     return yield* (await import('./core.mjs')).runEvents(prompt, locale, signal)
   }
 
-  yield { type: 'message', role: 'agent', text: both(intro || 'Plan ready — executing.') }
-  yield { type: 'plan', steps: plan.map((s) => ({ id: s.id, title: s.title, estimate: s.estimate })) }
+  if (!cp) {
+    yield { type: 'message', role: 'agent', text: both(intro || 'Plan ready — executing.') }
+    yield { type: 'plan', steps: plan.map((s) => ({ id: s.id, title: s.title, estimate: s.estimate })) }
+    checkpoint(0, 'steps')
+  }
 
   /* --- execution loop ----------------------------------------------- */
   let artifact = null
-  let credits = 0
 
-  for (let stepIndex = 0; stepIndex < plan.length && alive(); stepIndex++) {
+  for (let stepIndex = startStep; stepIndex < plan.length && alive(); stepIndex++) {
     const step = plan[stepIndex]
     yield { type: 'step_start', stepId: step.id }
     turns.push({
@@ -1017,9 +1082,11 @@ export async function* runOrchestrated(prompt, locale, signal, runtime) {
     credits += 60 + totalCalls * 4
     yield { type: 'progress', credits, stepIndex, total: plan.length }
     yield { type: 'step_done', stepId: step.id }
+    checkpoint(stepIndex + 1, 'steps')
   }
 
   /* --- artifact: requested, or synthesized from the workspace ------- */
+  checkpoint(plan.length, 'artifact')
   if (!artifact) {
     const htmlFile = [...files.entries()].find(([path]) => path.endsWith('.html'))
     artifact = htmlFile

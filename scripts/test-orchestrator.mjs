@@ -204,5 +204,42 @@ openRouterMock.server.close()
 zenMock.server.close()
 site.close()
 
+/* --- F: v2 checkpoints — resume on a fresh invocation ------------------ */
+const cpMock = llmMockServer(8898, { models: [] })
+process.env.RSB_PROVIDERS = 'openrouter'
+process.env.OPENAI_API_KEY = 'test-key'
+process.env.OPENAI_BASE_URL = 'http://127.0.0.1:8898/v1'
+process.env.OPENAI_MODEL = ''
+delete process.env.RSB_LLM_MODEL_CHAIN
+const { runOrchestrated } = await import('../server/orchestrator.mjs')
+
+const cps = []
+const ac = new AbortController()
+const run1 = []
+for await (const event of runOrchestrated('Checkpoint probe: page and deck', 'en', ac.signal, { onCheckpoint: (snap) => cps.push(snap) })) {
+  run1.push(event)
+  if (event.type === 'step_done') ac.abort() // simulate the worker hand-off at the step boundary
+}
+const captured = cps.find((c) => c.phase === 'steps' && c.stepIndex === 1)
+check(captured?.v === 2 && captured.stepIndex === 1, 'checkpoint captured at the step boundary → stepIndex ' + captured?.stepIndex)
+check((captured?.files ?? []).some(([p]) => p === 'index.html'), 'checkpoint carries the workspace files → ' + (captured?.files ?? []).map(([p]) => p).join(','))
+
+let captured2 = null
+const run2 = []
+for await (const event of runOrchestrated('Checkpoint probe: page and deck', 'en', undefined, { checkpoint: captured, onCheckpoint: (snap) => (captured2 = snap) })) {
+  run2.push(event)
+}
+const t2 = run2.map((e) => e.type)
+const resumeMsg = run2.find((e) => e.type === 'message' && /fresh worker invocation/i.test(e.text?.en ?? ''))
+check(Boolean(resumeMsg), 'resume announces the hand-off → ' + String(resumeMsg?.text?.en).slice(0, 48))
+check(run2[0]?.type !== 'run_start' || !run2.some((e, i) => i > 0 && e.type === 'run_start'), 'resumed run does not reset the UI with a second run_start')
+check(t2.filter((x) => x === 'step_start').length === 1, 'resumed run executes only the remaining step → step_start x' + t2.filter((x) => x === 'step_start').length)
+check(!t2.includes('plan'), 'resumed run does not re-stream the plan')
+check(!run2.some((e) => e.type === 'tool' && /running sandboxed code|Writing index\.html/.test(String(e.tool?.detail?.en ?? ''))), 'resumed run does not redo step-1 tool calls')
+check(t2.at(-1) === 'done' && t2.includes('artifact'), 'resumed run finishes with an artifact')
+check((captured2?.files ?? []).some(([p]) => p === 'index.html'), 'files survived the resume into the next checkpoint → ' + (captured2?.files ?? []).map(([p]) => p).slice(0, 4).join(','))
+check((captured2?.binaries ?? []).some(([n]) => n === 'deck.pptx'), 'binaries serialize through the checkpoint (base64) → ' + (captured2?.binaries ?? []).map(([n]) => n).join(','))
+cpMock.server.close()
+
 console.log(ok ? '\nORCHESTRATOR OK' : '\nORCHESTRATOR FAILED')
 process.exit(ok ? 0 : 1)
