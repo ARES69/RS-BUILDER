@@ -792,6 +792,12 @@ export async function* runOrchestrated(prompt, locale, signal, runtime) {
 
   const files = new Map()
   const binaries = new Map()
+  // continued runs start with the parent's workspace + artifact html
+  if (runtime?.seedFiles && typeof runtime.seedFiles === 'object') {
+    for (const [path, content] of Object.entries(runtime.seedFiles)) {
+      if (typeof content === 'string' && content.length < 200_000) files.set(path, content)
+    }
+  }
   const turns = [{ role: 'user', content: String(prompt) }]
   const runId = 'run_' + Math.random().toString(36).slice(2, 10)
   const deadline = Date.now() + 10 * 60 * 1000

@@ -59,11 +59,30 @@ export default async function handler(req, res) {
       return
     }
     reapStaleJobs().catch(() => null)
+    let lineageRoot = null
+    let seedFiles = null
+    if (payload.parentJobId) {
+      const parent = await getJob(String(payload.parentJobId))
+      const owner = sessionFromRequest(req)
+      if (parent && (!parent.ownerId || parent.ownerId === owner)) {
+        lineageRoot = parent.lineageRoot || parent.id
+        seedFiles = {}
+        for (const e of parent.events || []) {
+          if (e.type === 'file' && e.file?.path && typeof e.file.content === 'string') seedFiles[e.file.path] = e.file.content
+        }
+        const parentArt = (parent.events || []).filter((x) => x.type === 'artifact').pop()
+        if (parentArt?.artifact?.html) seedFiles['index.html'] = parentArt.artifact.html
+        const total = Object.values(seedFiles).reduce((a, c) => a + c.length, 0)
+        if (total > 400_000) seedFiles = Object.fromEntries(Object.entries(seedFiles).slice(0, 8))
+      }
+    }
     const job = await createJob({
       prompt: payload.prompt ?? '',
       locale: payload.locale,
       kickToken: randomBytes(16).toString('hex'),
       ownerId: sessionFromRequest(req) || undefined,
+      lineageRoot,
+      seedFiles,
     })
     kickWorker(workerOrigin(), job)
     // The kick fetch must be dispatched while this invocation is still alive:

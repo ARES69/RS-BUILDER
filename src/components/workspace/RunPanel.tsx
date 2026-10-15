@@ -130,6 +130,35 @@ export function RunPanel({
                     <ExternalLink size={11} /> {t('app.downloadArtifact')}
                   </a>
                 </div>
+                {state.artifactMeta?.pageUrl && (
+                  <div className="flex flex-wrap items-center gap-2 border-b border-line bg-surface/40 px-4 py-2">
+                    <a
+                      href={state.artifactMeta.pageUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="inline-flex items-center gap-1.5 rounded-full border border-cyan/40 bg-cyan/10 px-2.5 py-1 font-mono text-[11px] text-cyan hover:underline"
+                    >
+                      <ExternalLink size={11} /> {t('app.artifactPermanent')}
+                    </a>
+                    <span className="rounded-full border border-line px-2 py-0.5 font-mono text-[10.5px] text-muted">
+                      {t('app.artifactVersion')} v{state.artifactMeta.version}
+                      {state.artifactMeta.versions > 1 ? ' / ' + state.artifactMeta.versions : ''}
+                    </span>
+                    {state.artifactMeta.files
+                      .filter((f) => f.name !== 'index.html')
+                      .map((f) => (
+                        <a
+                          key={f.name}
+                          href={f.url}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="font-mono text-[10.5px] text-muted hover:text-cyan hover:underline"
+                        >
+                          {f.name}
+                        </a>
+                      ))}
+                  </div>
+                )}
                 <iframe
                   title={l(state.artifact.title)}
                   srcDoc={state.artifact.html}

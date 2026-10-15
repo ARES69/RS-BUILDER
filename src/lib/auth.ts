@@ -59,6 +59,7 @@ export type HistoryEntry = {
   createdAt: number
   finishedAt: number
   events: number
+  artifact?: { root: string; version: number; versions: number; pageUrl: string } | null
 }
 
 export async function fetchHistory(): Promise<HistoryEntry[]> {

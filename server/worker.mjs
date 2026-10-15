@@ -10,6 +10,7 @@
  */
 import { getJob, putJob } from './jobstore.mjs'
 import { appendRunHistory } from './history.mjs'
+import { publishArtifact } from './artifacts.mjs'
 import { runEvents } from './engine.mjs'
 
 const BATCH_MS = 400
@@ -61,7 +62,7 @@ export async function processJob(jobId) {
   let chained = false
   let cancelled = false
   try {
-    for await (const event of runEvents(job.prompt, job.locale, controller.signal)) {
+    for await (const event of runEvents(job.prompt, job.locale, controller.signal, { seedFiles: job.seedFiles })) {
       const fresh = await getJob(jobId)
       if (!fresh || fresh.status === 'cancelled') {
         cancelled = true
@@ -80,6 +81,16 @@ export async function processJob(jobId) {
         await flush({ status: 'queued' })
         await kickWorker(workerOrigin(), { id: jobId, kickToken: job.kickToken })
         return { ok: true, reason: 'chained' }
+      }
+    }
+    // publish the artifact (permanent urls + version manifest) before the
+    // terminal flush so the job_end snapshot already carries artifactMeta
+    const artEvent = [...job.events, ...buffer].filter((e) => e.type === 'artifact').pop()
+    if (artEvent?.artifact && !chained) {
+      try {
+        job.artifactMeta = await publishArtifact(job, artEvent.artifact)
+      } catch {
+        /* hosting is best-effort; the run itself still succeeds */
       }
     }
     if (cancelled) {

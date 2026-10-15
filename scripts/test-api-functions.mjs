@@ -217,5 +217,38 @@ let cookie = null
   report(anon.statusCode === 401, 'history without session → 401')
 }
 
+/* --- hosted artifacts: publish, versions, continue-lineage ------------- */
+process.env.RSB_ARTIFACT_DIR = join(process.env.RSB_JOB_DIR, 'artifacts')
+const { getManifest } = await import('../server/artifacts.mjs')
+const artifactsHandler = (await import('../api/v1/artifacts.mjs')).default
+{
+  const parent = await getJob(jobId)
+  report(Boolean(parent.artifactMeta?.pageUrl?.startsWith('fs://')) && parent.artifactMeta.version === 1, 'finished run published its artifact with a permanent url → v' + parent.artifactMeta?.version)
+  const manifest = await getManifest(jobId)
+  report(manifest?.versions?.length === 1, 'lineage manifest opened with v1')
+}
+{
+  const res = mockRes()
+  await handler(mockReq('POST', { prompt: 'Улучши страницу: добавь футер', locale: 'ru', mode: 'queue', parentJobId: jobId }, { headers: { cookie } }), res)
+  const childId = JSON.parse(res.chunks.join('')).jobId
+  const child = await getJob(childId)
+  report(child.lineageRoot === jobId && Boolean(child.seedFiles?.['index.html']), 'continue-run inherits lineage root and seeded workspace → ' + Object.keys(child.seedFiles || {}).join(','))
+  const wres = mockRes()
+  await workerHandler(mockReq('POST', { jobId: childId, kickToken: child.kickToken }), wres)
+  const doneChild = await getJob(childId)
+  const manifest = await getManifest(jobId)
+  report(doneChild.artifactMeta?.version === 2 && manifest.versions.length === 2, 'child artifact registered as v2 of the same lineage → ' + manifest.versions.length + ' versions')
+  const ares = mockRes()
+  await artifactsHandler(mockReq('GET', null, { headers: { cookie } }), ares)
+  const list = JSON.parse(ares.chunks.join(''))
+  report(list.artifacts.length >= 2 && list.artifacts.some((a) => a.root === jobId && a.version === 2), 'GET /artifacts lists hosted artifacts with versions → ' + list.artifacts.length)
+  const mres = mockRes()
+  await artifactsHandler(mockReq('GET', null, { headers: { cookie }, query: { root: jobId } }), mres)
+  report(mres.statusCode === 200 && JSON.parse(mres.chunks.join('')).versions.length === 2, 'GET /artifacts?root= returns the manifest (ownership-checked)')
+  const anon = mockRes()
+  await artifactsHandler(mockReq('GET', null, { query: { root: jobId } }), anon)
+  report(anon.statusCode === 401, 'manifest without session → 401')
+}
+
 console.log(ok ? '\nVERCEL FUNCTIONS CONTRACT OK' : '\nVERCEL FUNCTIONS CONTRACT FAILED')
 process.exit(ok ? 0 : 1)

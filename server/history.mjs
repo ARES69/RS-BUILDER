@@ -37,6 +37,9 @@ export async function appendRunHistory(userId, job) {
         createdAt: job.createdAt,
         finishedAt: Date.now(),
         events: (job.events || []).length,
+        artifact: job.artifactMeta
+          ? { root: job.artifactMeta.root, version: job.artifactMeta.version, pageUrl: job.artifactMeta.pageUrl, versions: job.artifactMeta.versions }
+          : null,
       },
       ...doc.runs.filter((r) => r.jobId !== job.id),
     ].slice(0, MAX_ENTRIES)

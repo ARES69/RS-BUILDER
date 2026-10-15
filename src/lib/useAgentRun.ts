@@ -10,6 +10,10 @@ function reduce(state: RunState, event: AgentEvent): RunState {
       return { ...initialRunState, status: 'running', model: event.model ?? null }
     case 'model':
       return { ...state, model: event.model }
+    case 'job_meta':
+      return { ...state, jobId: event.jobId }
+    case 'artifact_meta':
+      return { ...state, artifactMeta: event.meta }
     case 'message':
       return {
         ...state,
@@ -78,7 +82,7 @@ export function useAgentRun() {
   }, [])
 
   const start = useCallback(
-    async (scenario: Scenario) => {
+    async (scenario: Scenario, opts?: { parentJobId?: string | null }) => {
       controller.current?.abort()
       const next = new AbortController()
       controller.current = next
@@ -87,7 +91,7 @@ export function useAgentRun() {
 
       const live = remoteEnabled() && !demoForced()
       const events = live
-        ? runRemote(scenario.prompt[locale] ?? scenario.prompt.en, locale, next.signal)
+        ? runRemote(scenario.prompt[locale] ?? scenario.prompt.en, locale, next.signal, { parentJobId: opts?.parentJobId ?? null })
         : runScenario(scenario, { getSpeed: () => speedRef.current, signal: next.signal })
 
       try {

@@ -61,6 +61,8 @@ export type Scenario = {
 export type AgentEvent =
   | { type: 'run_start'; scenarioId?: string; runId?: string; model?: string }
   | { type: 'model'; model: string }
+  | { type: 'job_meta'; jobId: string; parentJobId?: string | null }
+  | { type: 'artifact_meta'; meta: ArtifactMeta }
   | { type: 'plan'; steps: { id: string; title: L; estimate: string }[] }
   | { type: 'step_start'; stepId: string }
   | { type: 'thought'; stepId: string; text: L }
@@ -75,7 +77,17 @@ export type AgentEvent =
   | { type: 'delivered'; items: L[] }
   | { type: 'done' }
 
+export type ArtifactMeta = {
+  root: string
+  version: number
+  versions: number
+  pageUrl: string | null
+  files: { name: string; url: string; size?: number }[]
+}
+
 export type RunState = {
+  jobId: string | null
+  artifactMeta: ArtifactMeta | null
   status: 'idle' | 'running' | 'done' | 'stopped'
   /** provider/model that actually serves the run (live LLM backend only). */
   model: string | null
@@ -95,6 +107,8 @@ export type RunState = {
 export const initialRunState: RunState = {
   status: 'idle',
   model: null,
+  jobId: null,
+  artifactMeta: null,
   plan: [],
   thoughts: [],
   tools: [],

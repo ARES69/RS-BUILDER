@@ -96,17 +96,18 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
  * Closing the tab, losing the network or a frozen worker do not kill the run;
  * the tail re-attaches with its cursor until a terminal status arrives.
  */
-async function* runQueued(prompt: string, locale: Locale, signal?: AbortSignal): AsyncGenerator<AgentEvent> {
+async function* runQueued(prompt: string, locale: Locale, signal?: AbortSignal, opts?: { parentJobId?: string | null }): AsyncGenerator<AgentEvent> {
   const base = (AGENT_API_URL ?? '').replace(/\/$/, '')
   const created = await fetch(base + '/v1/runs', {
     method: 'POST',
     headers: { 'content-type': 'application/json', ...runtimeHeaders() },
-    body: JSON.stringify({ prompt, locale, mode: 'queue' }),
+    body: JSON.stringify({ prompt, locale, mode: 'queue', parentJobId: opts?.parentJobId || undefined }),
     signal,
   })
   if (!created.ok) throw new RemoteAgentError('Agent backend rejected the job: ' + created.status, created.status)
-  const info = (await created.json()) as { jobId: string; streamUrl: string }
+  const info = (await created.json()) as { jobId: string; streamUrl: string; statusUrl: string }
   activeJobId = info.jobId
+  yield { type: 'job_meta', jobId: info.jobId, parentJobId: opts?.parentJobId ?? null } as AgentEvent
   const streamPath = info.streamUrl.replace(/^\/api/, '')
 
   let cursor = 0
@@ -142,6 +143,14 @@ async function* runQueued(prompt: string, locale: Locale, signal?: AbortSignal):
           }
           if (event.type === 'job_end') {
             terminal = true
+            if (event.status === 'done') {
+              try {
+                const snap = await (await fetch(base + info.statusUrl.replace(/^\/api/, ''), { headers: runtimeHeaders() })).json()
+                if (snap?.artifactMeta) yield { type: 'artifact_meta', meta: snap.artifactMeta } as AgentEvent
+              } catch {
+                /* hosting meta is optional */
+              }
+            }
             if (event.status === 'failed') {
               yield {
                 type: 'message',
@@ -181,10 +190,11 @@ export async function* runRemote(
   prompt: string,
   locale: Locale,
   signal?: AbortSignal,
+  opts?: { parentJobId?: string | null },
 ): AsyncGenerator<AgentEvent> {
   const caps = await backendCaps()
   if (caps && (caps.capabilities ?? []).includes('queue')) {
-    yield* runQueued(prompt, locale, signal)
+    yield* runQueued(prompt, locale, signal, opts)
     return
   }
   yield* runRemoteSync(prompt, locale, signal)

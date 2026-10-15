@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
-import { ArrowLeft, Coins, Gauge, History, LogIn, LogOut, Plus, RotateCcw, Settings, Sparkles } from 'lucide-react'
+import { ArrowLeft, Coins, ExternalLink, Gauge, History, LogIn, LogOut, Plus, RotateCcw, Settings, Sparkles } from 'lucide-react'
 import { useI18n } from '@/i18n'
 import { scenarios, scenarioFor } from '@/data/scenarios'
 import type { Scenario } from '@/lib/agent'
@@ -74,6 +74,7 @@ export default function Workspace() {
   const [user, setUser] = useState<SessionUser | null>(null)
   const [authOpen, setAuthOpen] = useState(false)
   const [history, setHistory] = useState<HistoryEntry[]>([])
+  const [continueFrom, setContinueFrom] = useState<string | null>(null)
 
   const refreshHistory = useCallback(() => {
     fetchHistory().then(setHistory)
@@ -128,9 +129,10 @@ export default function Workspace() {
     (prompt: string) => {
       setMobileView('chat')
       setTab('plan')
-      void start(scenarioFor(prompt))
+      void start(scenarioFor(prompt), { parentJobId: continueFrom })
+      setContinueFrom(null)
     },
-    [start],
+    [start, continueFrom],
   )
 
   const running = state.status === 'running'
@@ -315,18 +317,31 @@ export default function Workspace() {
               ) : (
                 <div className="flex flex-col gap-1">
                   {history.slice(0, 20).map((h) => (
-                    <button
-                      key={h.jobId}
-                      type="button"
-                      onClick={() => openHistoryRun(h.jobId)}
-                      title={t('app.historyReplay')}
-                      className="rounded-lg border border-line bg-surface/40 px-2 py-1.5 text-left transition-colors hover:border-accent/40"
-                    >
-                      <span className="block truncate text-[11.5px] text-fg">{h.prompt}</span>
-                      <span className="mt-0.5 block font-mono text-[10px] text-faint">
-                        {new Date(h.finishedAt || h.createdAt).toLocaleString(locale === 'ru' ? 'ru-RU' : 'en-US')} · {h.status}
-                      </span>
-                    </button>
+                    <div key={h.jobId} className="flex items-stretch gap-1">
+                      <button
+                        type="button"
+                        onClick={() => openHistoryRun(h.jobId)}
+                        title={t('app.historyReplay')}
+                        className="min-w-0 flex-1 rounded-lg border border-line bg-surface/40 px-2 py-1.5 text-left transition-colors hover:border-accent/40"
+                      >
+                        <span className="block truncate text-[11.5px] text-fg">{h.prompt}</span>
+                        <span className="mt-0.5 block font-mono text-[10px] text-faint">
+                          {new Date(h.finishedAt || h.createdAt).toLocaleString(locale === 'ru' ? 'ru-RU' : 'en-US')} · {h.status}
+                          {h.artifact ? ' · v' + h.artifact.version : ''}
+                        </span>
+                      </button>
+                      {h.artifact?.pageUrl && (
+                        <a
+                          href={h.artifact.pageUrl}
+                          target="_blank"
+                          rel="noreferrer"
+                          title={t('app.artifactPermanent')}
+                          className="inline-flex w-8 shrink-0 items-center justify-center rounded-lg border border-line text-muted transition-colors hover:border-cyan/40 hover:text-cyan"
+                        >
+                          <ExternalLink size={12} />
+                        </a>
+                      )}
+                    </div>
                   ))}
                 </div>
               )
@@ -411,6 +426,21 @@ export default function Workspace() {
 
           <div className="shrink-0 border-t border-line bg-bg/70 p-3 backdrop-blur sm:p-4">
             <div className="mx-auto max-w-3xl">
+              {state.jobId && state.status === 'done' && (
+                <button
+                  type="button"
+                  onClick={() => setContinueFrom((v) => (v === state.jobId ? null : state.jobId))}
+                  title={t('app.continueFromHint')}
+                  className={cn(
+                    'mb-2 inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-[11px] font-semibold transition-colors',
+                    continueFrom === state.jobId
+                      ? 'border-accent/60 bg-accent/10 text-accent'
+                      : 'border-line text-muted hover:border-accent/40 hover:text-accent',
+                  )}
+                >
+                  ⤷ {t('app.continueFrom')}
+                </button>
+              )}
               <Composer
                 onRun={run}
                 running={running}
