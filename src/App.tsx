@@ -19,6 +19,7 @@ import Feature from '@/pages/Feature'
 import NotFound from '@/pages/NotFound'
 import Blog from '@/pages/Blog'
 import BlogPost from '@/pages/BlogPost'
+import ArtifactView from '@/pages/ArtifactView'
 import { scrollToNode, scrollToTop } from '@/lib/dom'
 
 // Heavy routes (workspace demo with embedded artifacts, brand kit, legal, auth)
@@ -116,6 +117,7 @@ function AppRoutes() {
         <Route path="features/:slug" element={<Feature />} />
         <Route path="blog" element={<Blog />} />
         <Route path="blog/:slug" element={<BlogPost />} />
+        <Route path="view/:jobId" element={<ArtifactView />} />
         <Route
           path="brand"
           element={

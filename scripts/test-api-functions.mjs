@@ -359,6 +359,12 @@ const artifactsHandler = (await import('../api/v1/artifacts.mjs')).default
   await artifactsHandler(mockReq('GET', null, { query: { public: '1' } }), pub)
   const gal = JSON.parse(pub.chunks.join(''))
   report(pub.statusCode === 200 && gal.gallery.length >= 2 && gal.gallery.every((g) => g.pageUrl && !('kickToken' in g)), 'public gallery lists real artifacts without auth → ' + gal.gallery.length)
+  const single = mockRes()
+  await artifactsHandler(mockReq('GET', null, { query: { job: gal.gallery[0].jobId } }), single)
+  report(single.statusCode === 200 && JSON.parse(single.chunks.join('')).pageUrl === gal.gallery[0].pageUrl, 'public single-artifact fetch for /view pages → 200')
+  const missing = mockRes()
+  await artifactsHandler(mockReq('GET', null, { query: { job: 'job_nope123456' } }), missing)
+  report(missing.statusCode === 404, 'unknown job in public fetch → 404')
 }
 
 mockLlm.close()

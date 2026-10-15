@@ -14,6 +14,13 @@ export default async function handler(req, res) {
   if (!uid) {
     // public gallery of real artifacts: safe excerpt + urls only
     if (req.query?.public === '1') return res.status(200).json({ gallery: await publicGallery() })
+    // public single entry for the /view/<jobId> share pages
+    const jobId = String(req.query?.job ?? '')
+    if (jobId) {
+      const entry = (await publicGallery(200)).find((g) => g.jobId === jobId)
+      if (!entry) return res.status(404).json({ error: 'artifact not found in the public gallery' })
+      return res.status(200).json(entry)
+    }
     return res.status(401).json({ error: 'not signed in' })
   }
 

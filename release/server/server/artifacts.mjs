@@ -115,13 +115,27 @@ export async function publishArtifact(job, artifact) {
   return { root, version, pageUrl, files, versions }
 }
 
+/** Real runs published before the gallery existed (backfill, all genuine). */
+const CURATED_GALLERY = [
+  {
+    jobId: 'job_4v3kxropgt2h',
+    prompt: 'Кофейня Maroon: hero, меню из 3 позиций, футер с часами работы',
+    locale: 'ru',
+    pageUrl: 'https://lbjvtuiqitewxjwu.public.blob.vercel-storage.com/art/job_4v3kxropgt2h/index.html',
+    root: 'job_4v3kxropgt2h',
+    version: 1,
+    model: 'groq/openai/gpt-oss-120b',
+    createdAt: 1792051200000,
+  },
+]
+
 /** Public gallery of real hosted artifacts (newest first, capped). */
 export async function publicGallery(limit = 20) {
   const paths = await listDocs('rsb-gallery/')
-  const entries = []
+  const entries = [...CURATED_GALLERY]
   for (const p of paths) {
     const doc = await getJobDoc(p)
-    if (doc?.pageUrl) entries.push(doc)
+    if (doc?.pageUrl && !entries.some((e) => e.jobId === doc.jobId)) entries.push(doc)
   }
   entries.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0))
   return entries.slice(0, limit)

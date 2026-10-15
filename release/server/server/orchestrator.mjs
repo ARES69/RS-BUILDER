@@ -619,8 +619,14 @@ async function chatOnce(entry, system, turns, signal) {
     if (!response.ok) {
       const detail = (await response.text()).slice(0, 200)
       noteRateLimit(entry, response)
-      if (response.status === 402) throw new Error('insufficient credits (HTTP 402): ' + detail)
-      throw new Error('LLM ' + response.status + ': ' + detail)
+      const err = new Error(response.status === 402 ? 'insufficient credits (HTTP 402): ' + detail : 'LLM ' + response.status + ': ' + detail)
+      if (response.status === 429) {
+        const reset = Number(response.headers.get('x-ratelimit-reset') || 0)
+        const retryAfter = Number(response.headers.get('retry-after') || 0)
+        const wait = retryAfter > 0 ? retryAfter : reset > Date.now() / 1000 ? reset - Date.now() / 1000 : reset > 0 && reset <= 60 ? reset : 0
+        if (wait > 0 && wait <= 45) err.retryAfterSec = Math.ceil(wait)
+      }
+      throw err
     }
     const data = await response.json()
     const message = data.choices?.[0]?.message ?? {}
@@ -655,13 +661,25 @@ async function chat(entries, system, turns, signal) {
       lastError = lastError ?? new Error(entry.id + ' is cooling down (account quota)')
       continue
     }
-    try {
-      const result = await chatOnce(entry, system, turns, signal)
-      result.model = entry.id + '/' + entry.model
-      return result
-    } catch (error) {
-      if (signal?.aborted) throw error
-      lastError = error
+    // Groq-style transient 400s ("Parsing failed / failed_generation": the model
+    // emitted malformed tool-call JSON) deserve one retry on the SAME model
+    // before we declare the link dead and move on.
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        const result = await chatOnce(entry, system, turns, signal)
+        result.model = entry.id + '/' + entry.model
+        return result
+      } catch (error) {
+        if (signal?.aborted) throw error
+        lastError = error
+        if (attempt < 2 && error.retryAfterSec) {
+          // per-minute provider window: wait it out on the same model
+          await new Promise((r) => setTimeout(r, error.retryAfterSec * 1000))
+          continue
+        }
+        if (attempt === 0 && /Parsing failed|failed_generation|Tool call validation failed/i.test(String(error?.message ?? ''))) continue
+        break
+      }
     }
   }
   throw lastError ?? new Error('no models available')

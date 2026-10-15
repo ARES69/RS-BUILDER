@@ -3,6 +3,7 @@ import { Stats } from '@/components/home/Stats'
 import { Capabilities } from '@/components/home/Capabilities'
 import { Workflow } from '@/components/home/Workflow'
 import { Showcase } from '@/components/home/Showcase'
+import { RealRuns } from '@/components/home/RealRuns'
 import { WideResearch } from '@/components/home/WideResearch'
 import { Automations } from '@/components/home/Automations'
 import { Compare } from '@/components/home/Compare'
@@ -20,6 +21,7 @@ export default function Home() {
       <Capabilities />
       <Workflow />
       <Showcase />
+      <RealRuns />
       <WideResearch />
       <Automations />
       <Compare />
