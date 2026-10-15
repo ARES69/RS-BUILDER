@@ -69,6 +69,11 @@ export const ru: Dict = {
   },
 
   hero: {
+    liveBoardTitle: 'Живой бэкенд',
+    liveBoardNoProviders: 'провайдеры не настроены',
+    liveBoardLive: 'отвечает прямо сейчас',
+    liveBoardCooling: 'в кулдауне (квота)',
+    liveBoardArtifact: 'Настоящий артефакт настоящего прогона',
     badge: 'Автономный агент-сборщик',
     titleA: 'Что мне для вас',
     titleB: 'собрать?',
@@ -209,11 +214,6 @@ export const ru: Dict = {
     highlights: 'Ключевое',
     useCases: 'Кому подходит',
     related: 'Связанные возможности',
-    liveBoardTitle: 'Живой бэкенд',
-    liveBoardNoProviders: 'провайдеры не настроены',
-    liveBoardLive: 'отвечает прямо сейчас',
-    liveBoardCooling: 'в кулдауне (квота)',
-    liveBoardArtifact: 'Настоящий артефакт настоящего прогона',
     tryCta: 'Попробовать в воркспейсе',
     notFound: 'Такой страницы возможности пока нет.',
     backToFeatures: 'Все возможности',

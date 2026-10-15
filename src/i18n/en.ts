@@ -67,6 +67,11 @@ export const en = {
   },
 
   hero: {
+    liveBoardTitle: 'Live backend',
+    liveBoardNoProviders: 'no providers configured',
+    liveBoardLive: 'answers right now',
+    liveBoardCooling: 'cooling down (quota)',
+    liveBoardArtifact: 'Real artifact of a real run',
     badge: 'Autonomous build agent',
     titleA: 'What should I',
     titleB: 'build for you?',
@@ -207,11 +212,6 @@ export const en = {
     highlights: 'Highlights',
     useCases: 'Who it is for',
     related: 'Related features',
-    liveBoardTitle: 'Live backend',
-    liveBoardNoProviders: 'no providers configured',
-    liveBoardLive: 'answers right now',
-    liveBoardCooling: 'cooling down (quota)',
-    liveBoardArtifact: 'Real artifact of a real run',
     tryCta: 'Try it in the workspace',
     notFound: 'This feature page does not exist (yet).',
     backToFeatures: 'All features',

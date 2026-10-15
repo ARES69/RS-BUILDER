@@ -57,6 +57,7 @@ async function publishOne(path, body, contentType) {
       storeId: storeId(),
       oidcToken: await oidcToken(),
       contentType,
+      contentDisposition: 'inline',
       addRandomSuffix: false,
       allowOverwrite: true,
     })
