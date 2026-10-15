@@ -19,6 +19,44 @@ import { reapStaleJobs } from '../../server/reaper.mjs'
 /** Queued runs need a durable store: Vercel Blob on Vercel, fs elsewhere. */
 const queueAvailable = () => jobStoreKind() === 'blob' || !process.env.VERCEL
 
+/**
+ * Conversation condensation for follow-ups: inherited dialogues easily exceed
+ * free-tier TPM windows (groq 413 at ~8k tokens). Old tool payloads carry the
+ * bulk — truncate them and cap the window; the workspace files (not the log)
+ * are the source of truth for the artifact state.
+ */
+const ELIDED_ARG_TOOLS = new Set(['write_file', 'deliver_artifact', 'make_slides', 'make_captions'])
+
+function compressTurns(turns) {
+  if (!Array.isArray(turns) || !turns.length) return null
+  const kept = turns.slice(-28)
+  const cutAt = Math.max(0, kept.length - 4)
+  return kept.map((m, i) => {
+    if (m.role === 'assistant' && Array.isArray(m.toolCalls)) {
+      // the payload of past write/deliver calls lives in the seeded workspace;
+      // keeping the full arguments blows free-tier TPM windows (groq 413)
+      const toolCalls = m.toolCalls.map((c) => {
+        if (ELIDED_ARG_TOOLS.has(c.name)) {
+          let hint = {}
+          try {
+            const a = typeof c.args === 'string' ? JSON.parse(c.args) : c.args
+            hint = { path: a?.path ?? a?.from_file ?? a?.file_name ?? undefined, elided: 'content lives in the workspace' }
+          } catch { /* keep empty hint */ }
+          return { ...c, args: JSON.stringify(hint) }
+        }
+        return c
+      })
+      const content = typeof m.content === 'string' && m.content.length > 400 ? m.content.slice(0, 400) + ' …' : m.content
+      return { ...m, content, toolCalls }
+    }
+    if (m.role === 'tool') {
+      const cap = i < cutAt ? 240 : 1200
+      return { ...m, results: (m.results ?? []).map((r) => ({ ...r, text: String(r.text ?? '').slice(0, cap) + (String(r.text ?? '').length > cap ? ' …' : '') })) }
+    }
+    return m
+  })
+}
+
 export const config = {
   runtime: 'nodejs',
   maxDuration: 300, // long runs stream for minutes, not seconds
@@ -77,7 +115,7 @@ export default async function handler(req, res) {
       const owner = sessionFromRequest(req)
       if (parent && (!parent.ownerId || parent.ownerId === owner)) {
         lineageRoot = parent.lineageRoot || parent.id
-        seedTurns = parent.checkpoint?.turns ?? null
+        seedTurns = compressTurns(parent.checkpoint?.turns)
         seedBinaries = parent.checkpoint?.binaries ?? null
         seedFiles = {}
         for (const e of parent.events || []) {

@@ -25,16 +25,33 @@ const queueAvailable = () => jobStoreKind() === 'blob' || !process.env.VERCEL
  * bulk — truncate them and cap the window; the workspace files (not the log)
  * are the source of truth for the artifact state.
  */
+const ELIDED_ARG_TOOLS = new Set(['write_file', 'deliver_artifact', 'make_slides', 'make_captions'])
+
 function compressTurns(turns) {
   if (!Array.isArray(turns) || !turns.length) return null
   const kept = turns.slice(-28)
-  const cutAt = Math.max(0, kept.length - 8)
+  const cutAt = Math.max(0, kept.length - 4)
   return kept.map((m, i) => {
-    if (i < cutAt && m.role === 'tool') {
-      return { ...m, results: (m.results ?? []).map((r) => ({ ...r, text: String(r.text ?? '').slice(0, 240) + ' …' })) }
+    if (m.role === 'assistant' && Array.isArray(m.toolCalls)) {
+      // the payload of past write/deliver calls lives in the seeded workspace;
+      // keeping the full arguments blows free-tier TPM windows (groq 413)
+      const toolCalls = m.toolCalls.map((c) => {
+        if (ELIDED_ARG_TOOLS.has(c.name)) {
+          let hint = {}
+          try {
+            const a = typeof c.args === 'string' ? JSON.parse(c.args) : c.args
+            hint = { path: a?.path ?? a?.from_file ?? a?.file_name ?? undefined, elided: 'content lives in the workspace' }
+          } catch { /* keep empty hint */ }
+          return { ...c, args: JSON.stringify(hint) }
+        }
+        return c
+      })
+      const content = typeof m.content === 'string' && m.content.length > 400 ? m.content.slice(0, 400) + ' …' : m.content
+      return { ...m, content, toolCalls }
     }
-    if (i < cutAt && m.role === 'assistant' && typeof m.content === 'string' && m.content.length > 400) {
-      return { ...m, content: m.content.slice(0, 400) + ' …' }
+    if (m.role === 'tool') {
+      const cap = i < cutAt ? 240 : 1200
+      return { ...m, results: (m.results ?? []).map((r) => ({ ...r, text: String(r.text ?? '').slice(0, cap) + (String(r.text ?? '').length > cap ? ' …' : '') })) }
     }
     return m
   })
