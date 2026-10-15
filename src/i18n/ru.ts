@@ -401,12 +401,12 @@ export const ru: Dict = {
     decline: 'Не надо',
   },
   view: {
-    viewCta: 'Сделай такой же',
-    viewMissing: 'Этого артефакта нет в публичной галерее (пока или уже).',
-    viewLoading: 'Загружаю артефакт…',
-    viewVersion: 'версия',
-    viewOriginal: 'оригинал',
-    viewLocale: 'ru',
+    cta: 'Сделай такой же',
+    missing: 'Этого артефакта нет в публичной галерее (пока или уже).',
+    loading: 'Загружаю артефакт…',
+    version: 'версия',
+    original: 'оригинал',
+    locale: 'ru',
   },
 
 }

@@ -399,12 +399,12 @@ export const en = {
     decline: 'No thanks',
   },
   view: {
-    viewCta: 'Make your own',
-    viewMissing: 'This artifact is not in the public gallery (yet or anymore).',
-    viewLoading: 'Loading the artifact…',
-    viewVersion: 'version',
-    viewOriginal: 'original url',
-    viewLocale: 'en',
+    cta: 'Make your own',
+    missing: 'This artifact is not in the public gallery (yet or anymore).',
+    loading: 'Loading the artifact…',
+    version: 'version',
+    original: 'original url',
+    locale: 'en',
   },
 
 }
