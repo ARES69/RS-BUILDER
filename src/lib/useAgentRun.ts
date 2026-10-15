@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { initialRunState, type AgentEvent, type RunState, type Scenario } from './agent'
-import { runScenario } from './agentEngine'
-import { cancelActiveRemote, demoForced, remoteEnabled, runRemote } from './remoteAgent'
+import { initialRunState, type AgentEvent, type RunState } from './agent'
+import { cancelActiveRemote, remoteEnabled, runRemote } from './remoteAgent'
 import { useI18n } from '@/i18n'
 
 function reduce(state: RunState, event: AgentEvent): RunState {
@@ -58,14 +57,11 @@ function reduce(state: RunState, event: AgentEvent): RunState {
   }
 }
 
+/** Live-backend-only run hook: there is no simulator anymore. */
 export function useAgentRun() {
-  const { locale } = useI18n()
+  const { locale, t } = useI18n()
   const [state, setState] = useState<RunState>(initialRunState)
-  const [speed, setSpeedState] = useState(1)
-  const [activeScenario, setActiveScenario] = useState<Scenario | null>(null)
   const controller = useRef<AbortController | null>(null)
-  const speedRef = useRef(speed)
-  speedRef.current = speed
 
   const stop = useCallback(() => {
     controller.current?.abort()
@@ -77,25 +73,32 @@ export function useAgentRun() {
   const reset = useCallback(() => {
     controller.current?.abort()
     controller.current = null
-    setActiveScenario(null)
     setState(initialRunState)
   }, [])
 
   const start = useCallback(
-    async (scenario: Scenario, opts?: { parentJobId?: string | null }) => {
+    async (prompt: string, opts?: { parentJobId?: string | null }) => {
       controller.current?.abort()
       const next = new AbortController()
       controller.current = next
-      setActiveScenario(scenario)
       setState({ ...initialRunState, status: 'running' })
 
-      const live = remoteEnabled() && !demoForced()
-      const events = live
-        ? runRemote(scenario.prompt[locale] ?? scenario.prompt.en, locale, next.signal, { parentJobId: opts?.parentJobId ?? null })
-        : runScenario(scenario, { getSpeed: () => speedRef.current, signal: next.signal })
+      if (!remoteEnabled()) {
+        setState((s) =>
+          reduce(
+            reduce(s, {
+              type: 'message',
+              role: 'agent',
+              text: { en: t('app.noBackend'), ru: t('app.noBackend') },
+            } as AgentEvent),
+            { type: 'done' } as AgentEvent,
+          ),
+        )
+        return
+      }
 
       try {
-        for await (const event of events) {
+        for await (const event of runRemote(prompt, locale, next.signal, opts)) {
           if (next.signal.aborted) break
           setState((s) => reduce(s, event))
         }
@@ -107,29 +110,27 @@ export function useAgentRun() {
               type: 'message',
               role: 'agent',
               text: {
-                en: 'The live backend could not complete this run: ' + message + '. Check VITE_AGENT_API_URL and that the server is up (npm run server).',
-                ru: 'Живой бэкенд не смог завершить запуск: ' + message + '. Проверьте VITE_AGENT_API_URL и что сервер поднят (npm run server).',
+                en: 'The live backend could not complete this run: ' + message + '.',
+                ru: 'Живой бэкенд не смог завершить запуск: ' + message + '.',
               },
-            }),
+            } as AgentEvent),
           )
         }
       }
-
       setState((s) => (s.status === 'running' ? { ...s, status: next.signal.aborted ? 'stopped' : 'done' } : s))
     },
-    [locale],
+    [locale, t],
   )
 
   /** Replays a persisted run (history) into the thread without a new execution. */
   const replay = useCallback((events: AgentEvent[]) => {
     controller.current?.abort()
     controller.current = null
-    setActiveScenario(null)
     const final = events.reduce(reduce, { ...initialRunState, status: 'running' as const })
     setState({ ...final, status: 'done' })
   }, [])
 
   useEffect(() => () => controller.current?.abort(), [])
 
-  return { state, start, stop, reset, replay, speed, setSpeed: setSpeedState, activeScenario }
+  return { state, start, stop, reset, replay }
 }

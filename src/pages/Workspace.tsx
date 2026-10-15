@@ -1,9 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
-import { ArrowLeft, Coins, ExternalLink, Gauge, History, LogIn, LogOut, Plus, RotateCcw, Settings, Sparkles } from 'lucide-react'
+import { ArrowLeft, Coins, ExternalLink, History, LogIn, LogOut, Plus, RotateCcw, Settings, Sparkles } from 'lucide-react'
 import { useI18n } from '@/i18n'
-import { scenarios, scenarioFor } from '@/data/scenarios'
-import type { Scenario } from '@/lib/agent'
+import { PRESETS } from '@/data/scenarios'
 import { useAgentRun } from '@/lib/useAgentRun'
 import { cn } from '@/lib/cn'
 import { Logo } from '@/components/Logo'
@@ -12,7 +11,7 @@ import { Composer } from '@/components/home/Composer'
 import { Thread } from '@/components/workspace/Thread'
 import { RunPanel } from '@/components/workspace/RunPanel'
 import { ThemeToggle } from '@/components/layout/ThemeToggle'
-import { AGENT_API_URL, demoForced, fetchBackendStatus, remoteEnabled, type BackendStatus } from '@/lib/remoteAgent'
+import { AGENT_API_URL, fetchBackendStatus, remoteEnabled, type BackendStatus } from '@/lib/remoteAgent'
 import { SettingsPanel } from '@/components/workspace/SettingsPanel'
 import { AuthModal } from '@/components/workspace/AuthModal'
 import { fetchCredits, fetchHistory, fetchHistoryRun, fetchMe, logOut, type HistoryEntry, type SessionUser } from '@/lib/auth'
@@ -37,7 +36,6 @@ const ALIAS: Record<string, string> = {
   automations: 'research',
 }
 
-const SPEEDS = [0.5, 1, 2, 4]
 
 export default function Workspace() {
   const { t, l, locale } = useI18n()
@@ -64,13 +62,12 @@ export default function Workspace() {
   const cooldownNow = (until?: number) => Boolean(until && until > Date.now())
   const showFallbackBanner =
     remoteEnabled() &&
-    !demoForced() &&
     backend !== null &&
     (backend.engine === 'deterministic' ||
       Boolean(backend.providers?.length) === false ||
       (backend.providers ?? []).every((id) => cooldownNow(backend?.cooldowns?.[id])))
   const [params] = useSearchParams()
-  const { state, start, stop, reset, replay, speed, setSpeed, activeScenario } = useAgentRun()
+  const { state, start, stop, reset, replay } = useAgentRun()
   const [user, setUser] = useState<SessionUser | null>(null)
   const [authOpen, setAuthOpen] = useState(false)
   const [history, setHistory] = useState<HistoryEntry[]>([])
@@ -106,22 +103,23 @@ export default function Workspace() {
   const [mobileView, setMobileView] = useState<'chat' | 'panel'>('chat')
   const booted = useRef(false)
 
-  const initialScenario = useMemo<Scenario | null>(() => {
+  const initialPrompt = useMemo<string | null>(() => {
+    const promptParam = params.get('prompt')
+    if (promptParam) return promptParam
     const scenarioParam = params.get('scenario')
     if (scenarioParam) {
       const id = ALIAS[scenarioParam] ?? scenarioParam
-      return scenarios.find((s) => s.id === id) ?? null
+      const preset = PRESETS.find((pr) => pr.id === id)
+      if (preset) return preset.prompt[locale] ?? preset.prompt.en
     }
-    const promptParam = params.get('prompt')
-    if (promptParam) return scenarioFor(promptParam)
     return null
-  }, [params])
+  }, [params, locale])
 
   useEffect(() => {
-    if (booted.current || !initialScenario) return
+    if (booted.current || !initialPrompt) return
     booted.current = true
-    void start(initialScenario)
-  }, [initialScenario, start])
+    void start(initialPrompt)
+  }, [initialPrompt, start])
 
   // Jump to the preview tab the moment an artifact lands.
   useEffect(() => {
@@ -132,7 +130,7 @@ export default function Workspace() {
     (prompt: string) => {
       setMobileView('chat')
       setTab('plan')
-      void start(scenarioFor(prompt), { parentJobId: continueFrom })
+      void start(prompt, { parentJobId: continueFrom })
       setContinueFrom(null)
     },
     [start, continueFrom],
@@ -175,9 +173,7 @@ export default function Workspace() {
             <span className={cn('h-1.5 w-1.5 rounded-full', running ? 'animate-pulse-dot bg-accent' : 'bg-line-strong')} />
             {statusLabel}
           </span>
-          {activeScenario ? (
-            <span className="hidden truncate text-[12.5px] text-muted md:block">{l(activeScenario.label)}</span>
-          ) : null}
+
         </div>
 
         <div className="ml-auto flex items-center gap-2">
@@ -186,22 +182,6 @@ export default function Workspace() {
             {state.credits}
           </span>
 
-          <div className="hidden items-center gap-1 rounded-full border border-line p-0.5 lg:flex">
-            <Gauge size={12} className="mx-1.5 text-faint" />
-            {SPEEDS.map((s) => (
-              <button
-                key={s}
-                type="button"
-                onClick={() => setSpeed(s)}
-                className={cn(
-                  'rounded-full px-2 py-1 font-mono text-[11px] transition-colors',
-                  speed === s ? 'bg-accent text-accent-ink' : 'text-muted hover:text-fg',
-                )}
-              >
-                {s}×
-              </button>
-            ))}
-          </div>
 
           {state.status !== 'idle' ? (
             <button
@@ -283,8 +263,8 @@ export default function Workspace() {
           </div>
 
           <div className="flex-1 overflow-y-auto px-2 pb-4">
-            {scenarios.map((scenario) => {
-              const active = activeScenario?.id === scenario.id
+            {PRESETS.map((scenario) => {
+              const active = false
               return (
                 <button
                   key={scenario.id}
@@ -375,7 +355,7 @@ export default function Workspace() {
                   )}
                 </>
               ) : (
-                t('app.demoBadge')
+                t('app.noBackend')
               )}
             </p>
           </div>
@@ -406,7 +386,7 @@ export default function Workspace() {
               </div>
               <span className="eyebrow -mb-3">{t('app.samples')}</span>
               <div className="grid w-full max-w-xl gap-2 sm:grid-cols-2">
-                {scenarios.map((scenario) => (
+                {PRESETS.map((scenario) => (
                   <button
                     key={scenario.id}
                     type="button"

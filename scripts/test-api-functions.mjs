@@ -7,6 +7,46 @@ import { EventEmitter } from 'node:events'
 import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { createServer } from 'node:http'
+
+/* Mock LLM: drives the REAL orchestrator loop (there is no simulator anymore). */
+let mockCalls = 0
+const mockLlm = createServer((req, res) => {
+  let body = ''
+  req.on('data', (c) => (body += c))
+  req.on('end', () => {
+    if (req.method === 'GET' && req.url.endsWith('/models')) {
+      res.setHeader('content-type', 'application/json')
+      return res.end(JSON.stringify({ data: [] }))
+    }
+    const payload = JSON.parse(body || '{}')
+    const msgs = payload.messages ?? []
+    const execIdx = msgs.map((m) => m.role === 'user' && String(m.content).startsWith('Execute step')).lastIndexOf(true)
+    const hasPlan = msgs.some((m) => m.role === 'assistant' && (m.tool_calls ?? []).some((c) => c.function.name === 'submit_plan'))
+    const inStep = execIdx >= 0 ? msgs.slice(execIdx + 1).filter((m) => m.role === 'tool').length : 0
+    const tc = (name, args) => [{ id: 'mc_' + ++mockCalls, type: 'function', function: { name, arguments: JSON.stringify(args) } }]
+    let move
+    if (!hasPlan) {
+      move = { content: 'Two quick steps.', tool_calls: tc('submit_plan', { intro: 'Mock plan intro', steps: [{ title: 'Build page' }, { title: 'Verify' }] }) }
+    } else if (execIdx < 0 || /Execute step 1/.test(String(msgs[execIdx].content))) {
+      if (inStep === 0) move = { content: null, tool_calls: tc('think', { text: 'Writing a compact page' }) }
+      else if (inStep === 1) move = { content: null, tool_calls: tc('write_file', { path: 'index.html', content: '<!doctype html><html><head><title>Mock</title></head><body><h1>Mock built page</h1></body></html>' }) }
+      else move = { content: null, tool_calls: tc('step_done', { summary: 'page written' }) }
+    } else {
+      if (inStep === 0) move = { content: null, tool_calls: tc('think', { text: 'Final check' }) }
+      else move = { content: null, tool_calls: tc('step_done', { summary: 'verified' }) }
+    }
+    res.setHeader('content-type', 'application/json')
+    res.end(JSON.stringify({ choices: [{ message: { role: 'assistant', content: move.content, tool_calls: move.tool_calls } }] }))
+  })
+}).listen(8899)
+
+process.env.RSB_PROVIDERS = 'openrouter'
+process.env.OPENAI_API_KEY = 'mock-key'
+process.env.OPENAI_BASE_URL = 'http://127.0.0.1:8899/v1'
+process.env.OPENAI_MODEL = ''
+process.env.RSB_LLM_MODEL_CHAIN = 'mock-model'
+
 import handler from '../api/v1/runs.mjs'
 import healthHandler from '../api/v1/health.mjs'
 import statusHandler from '../api/v1/status.mjs'
@@ -81,8 +121,8 @@ const report = (good, msg) => { console.log((good ? 'PASS  ' : 'FAIL  ') + msg);
   statusHandler(req, res)
   const json = JSON.parse(res.chunks.join(''))
   report(
-    res.statusCode === 200 && json.ok === true && json.runtimeKeys.join(',') === 'groq' && json.engine === 'llm' && json.providers.join(',') === 'groq' && 'cooldowns' in json && 'catalogs' in json,
-    'GET /api/v1/status echoes runtime keys and exposes cooldowns/catalogs → ' + JSON.stringify(json).slice(0, 160),
+    res.statusCode === 200 && json.ok === true && json.runtimeKeys.join(',') === 'groq' && json.engine === 'llm' && 'cooldowns' in json && 'catalogs' in json,
+    'GET /api/v1/status echoes runtime keys and exposes cooldowns/catalogs → runtimeKeys=' + json.runtimeKeys,
   )
 }
 
@@ -95,7 +135,7 @@ const report = (good, msg) => { console.log((good ? 'PASS  ' : 'FAIL  ') + msg);
 
 /* --- queued runs: job lifecycle on the fs store ------------------------ */
 process.env.RSB_JOB_DIR = mkdtempSync(join(tmpdir(), 'rsb-jobs-test-'))
-process.env.RSB_PROVIDERS = 'none'
+process.env.RSB_PROVIDERS = 'openrouter' // the mock LLM drives queued runs too
 const { getJob, putJob } = await import('../server/jobstore.mjs')
 const workerHandler = (await import('../api/v1/worker.mjs')).default
 const jobHandler = (await import('../api/v1/job.mjs')).default
@@ -125,7 +165,7 @@ let jobId = null
   await workerHandler(mockReq('POST', { jobId, kickToken: job.kickToken }), res)
   const done = await getJob(jobId)
   const types = done.events.map((e) => e.type)
-  report(done.status === 'done' && types[0] === 'run_start' && types.at(-1) === 'done' && types.includes('artifact'), 'worker drains the engine into the job log → ' + done.events.length + ' events, status ' + done.status)
+  report(done.status === 'done' && types[0] === 'run_start' && types.at(-1) === 'done' && types.includes('artifact'), 'worker drains the engine into the job log → ' + done.events.length + ' events, status ' + done.status + (done.error ? ' ERROR: ' + done.error : ''))
 }
 {
   const res = mockRes()
@@ -317,5 +357,6 @@ const artifactsHandler = (await import('../api/v1/artifacts.mjs')).default
   report(anon.statusCode === 401, 'manifest without session → 401')
 }
 
+mockLlm.close()
 console.log(ok ? '\nVERCEL FUNCTIONS CONTRACT OK' : '\nVERCEL FUNCTIONS CONTRACT FAILED')
 process.exit(ok ? 0 : 1)

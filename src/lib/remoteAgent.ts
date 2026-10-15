@@ -13,9 +13,6 @@ export const AGENT_API_URL: string | undefined = import.meta.env.VITE_AGENT_API_
 
 export const remoteEnabled = (): boolean => Boolean(AGENT_API_URL)
 
-/** True when the visitor forced the local simulator in workspace settings. */
-export const demoForced = (): boolean => loadSettings().mode === 'demo'
-
 /** Per-request provider keys from workspace settings (never persisted server-side). */
 function runtimeHeaders(): Record<string, string> {
   const settings = loadSettings()

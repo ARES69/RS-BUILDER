@@ -8,8 +8,6 @@
 export type RuntimeProviderId = 'openrouter' | 'opencode-zen' | 'groq' | 'gemini' | 'mistral' | 'nim'
 
 export type BuilderSettings = {
-  /** auto = live backend when configured, demo = force the local simulator. */
-  mode: 'auto' | 'demo'
   keys: Partial<Record<RuntimeProviderId, string>>
 }
 
@@ -24,7 +22,7 @@ export const PROVIDER_META: { id: RuntimeProviderId; label: string; href: string
   { id: 'nim', label: 'NVIDIA NIM', href: 'https://build.nvidia.com', hint: 'nvapi-… · free tier' },
 ]
 
-const DEFAULTS: BuilderSettings = { mode: 'auto', keys: {} }
+const DEFAULTS: BuilderSettings = { keys: {} }
 
 export function loadSettings(): BuilderSettings {
   try {
@@ -32,7 +30,6 @@ export function loadSettings(): BuilderSettings {
     if (!raw) return { ...DEFAULTS }
     const parsed = JSON.parse(raw) as Partial<BuilderSettings>
     return {
-      mode: parsed.mode === 'demo' ? 'demo' : 'auto',
       keys: parsed.keys && typeof parsed.keys === 'object' ? (parsed.keys as BuilderSettings['keys']) : {},
     }
   } catch {

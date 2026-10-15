@@ -6,7 +6,6 @@
  */
 import { useEffect, useState } from 'react'
 import { ExternalLink, X } from 'lucide-react'
-import { cn } from '@/lib/cn'
 import { useI18n } from '@/i18n'
 import { AGENT_API_URL } from '@/lib/remoteAgent'
 import { fetchCredits, type LedgerEntry } from '@/lib/auth'
@@ -67,7 +66,7 @@ export function SettingsPanel({ open, onClose }: { open: boolean; onClose: () =>
     for (const [id, value] of Object.entries(draft.keys)) {
       if (value && value.trim()) (keys as Record<string, string>)[id] = value.trim()
     }
-    const next: BuilderSettings = { mode: draft.mode, keys }
+    const next: BuilderSettings = { keys }
     saveSettings(next)
     setDraft(next)
     setSavedAt(Date.now())
@@ -98,31 +97,6 @@ export function SettingsPanel({ open, onClose }: { open: boolean; onClose: () =>
             <X size={14} />
           </button>
         </header>
-
-        {/* Run mode */}
-        <section>
-          <p className="eyebrow mb-2">{t('app.settingsMode')}</p>
-          <div className="grid grid-cols-2 gap-2">
-            {(['auto', 'demo'] as const).map((mode) => (
-              <button
-                key={mode}
-                type="button"
-                onClick={() => setDraft((d) => ({ ...d, mode }))}
-                className={cn(
-                  'rounded-xl border px-3 py-2.5 text-left transition-colors',
-                  draft.mode === mode ? 'border-accent/60 bg-accent/10' : 'border-line bg-surface/50 hover:border-accent/30',
-                )}
-              >
-                <span className="block text-[12.5px] font-semibold text-fg">
-                  {mode === 'auto' ? t('app.modeAuto') : t('app.modeDemo')}
-                </span>
-                <span className="mt-0.5 block text-[10.5px] leading-snug text-faint">
-                  {mode === 'auto' ? t('app.modeAutoHint') : t('app.modeDemoHint')}
-                </span>
-              </button>
-            ))}
-          </div>
-        </section>
 
         {/* Live backend status */}
         <section>

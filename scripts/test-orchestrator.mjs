@@ -120,10 +120,10 @@ delete process.env.OPENCODE_API_KEY
 /* --- A0b: per-request runtime keys (bring your own key) --------------- */
 delete process.env.OPENAI_API_KEY
 delete process.env.RSB_PROVIDERS
-check(JSON.stringify(engineInfo().providers) === '[]' || engineInfo().engine === 'deterministic', 'no env keys → deterministic engine → ' + JSON.stringify(engineInfo()))
+check(JSON.stringify(engineInfo().providers) === '[]' || engineInfo().engine === 'off', 'no env keys → engine off (no simulator anymore) → ' + JSON.stringify(engineInfo()))
 check(JSON.stringify(engineInfo({ groq: 'gsk-test' }).providers) === '["groq"]', 'runtime key enables a provider without any env → ' + JSON.stringify(engineInfo({ groq: 'gsk-test' }).providers))
 const rtEntries = await (await import('../server/orchestrator.mjs')).providerEntries(null, { groq: 'gsk-test' })
-check(rtEntries.length === 4 && rtEntries.every((e) => e.key === 'gsk-test'), 'runtime key flows into the provider chain → ' + rtEntries.length + ' groq models')
+check(rtEntries.length === 3 && rtEntries.every((e) => e.key === 'gsk-test'), 'runtime key flows into the provider chain → ' + rtEntries.length + ' groq models')
 check((await import('../server/orchestrator.mjs')).parseRuntimeKeys('{"openrouter":"sk-x","junk":1,"groq":7}') !== null, 'parseRuntimeKeys accepts a mixed header and drops junk')
 check((await import('../server/orchestrator.mjs')).parseRuntimeKeys('not-json') === null, 'parseRuntimeKeys rejects garbage')
 process.env.OPENAI_API_KEY = 'test-key'
@@ -190,18 +190,31 @@ check(threw.ok === false && threw.text.includes('boom'), 'run_code surfaces sand
 const { providerEntries, __resetProviderCooldowns } = await import('../server/orchestrator.mjs')
 process.env.RSB_PROVIDERS = 'openrouter'
 process.env.RSB_LLM_MODEL_CHAIN = 'quota-model, mock-model'
-const cooled = await collect('One more welcome screen', 'en')
+let quotaError = null
+try {
+  await collect('One more welcome screen', 'en')
+} catch (error) {
+  quotaError = error
+}
 check(openRouterMock.hits['quota-model'] === 1, 'daily-429 model probed exactly once per run → hits=' + openRouterMock.hits['quota-model'])
-check(cooled.model === null && cooled.events.some((e) => e.type === 'plan'), 'account-level 429 cools the whole provider; the run falls back gracefully instead of burning quota → model=' + cooled.model)
+check(Boolean(quotaError) && /429|Rate limit/i.test(String(quotaError.message)), 'account-level 429 fails the run honestly (no silent simulator) → ' + String(quotaError?.message).slice(0, 60))
 let entriesNow = await providerEntries()
 check(entriesNow.length === 0, 'provider cooled down after account-level daily 429 → entries=' + entriesNow.length)
 __resetProviderCooldowns()
 entriesNow = await providerEntries()
 check(entriesNow.length === 2, 'cooldown reset restores the chain → entries=' + entriesNow.length)
 
-/* --- E: deterministic fallback ---------------------------------------- */
+/* --- E: no providers = honest failure (there is no simulator anymore) ---- */
 process.env.RSB_PROVIDERS = 'none'
-check(engineInfo().engine === 'deterministic', 'RSB_PROVIDERS=none → deterministic engine')
+check(engineInfo().engine === 'off', 'RSB_PROVIDERS=none → engine off → ' + engineInfo().engine)
+let honestError = null
+try {
+  const { runEvents } = await import('../server/engine.mjs')
+  for await (const e of runEvents('anything', 'en')) void e
+} catch (error) {
+  honestError = error
+}
+check(Boolean(honestError) && /no LLM provider/i.test(String(honestError.message)), 'runEvents throws honestly without providers → ' + honestError?.message)
 
 openRouterMock.server.close()
 zenMock.server.close()

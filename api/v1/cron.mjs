@@ -33,10 +33,13 @@ export default async function handler(req, res) {
   const locale = process.env.AUTOMATION_LOCALE === 'ru' ? 'ru' : 'en'
 
   const events = []
+  let runError = null
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), 240000)
   try {
     for await (const event of runEvents(prompt, locale, controller.signal)) events.push(event)
+  } catch (error) {
+    runError = String(error?.message ?? error)
   } finally {
     clearTimeout(timer)
   }
@@ -44,6 +47,7 @@ export default async function handler(req, res) {
   const artifact = events.find((e) => e.type === 'artifact')?.artifact
   const summary = {
     runAt: new Date().toISOString(),
+    runError,
     engine: engineInfo(),
     events: events.length,
     credits: events.filter((e) => e.type === 'progress').at(-1)?.credits ?? 0,

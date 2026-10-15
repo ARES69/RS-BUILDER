@@ -1,7 +1,58 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Check, CircleDashed } from 'lucide-react'
 import { useI18n } from '@/i18n'
-import { scenarios } from '@/data/scenarios'
+import type { Localized } from '@/i18n'
+
+/** Presentational reel for the landing hero: own tiny script, no agent engine. */
+type ReelStep = { id: string; title: Localized; credits: number }
+type Reel = { id: string; label: Localized; prompt: Localized; runtime: string; steps: ReelStep[] }
+const REEL: Reel[] = [
+  {
+    id: 'site',
+    label: { en: 'Landing page', ru: 'Лендинг' },
+    prompt: { en: 'Single-origin coffee subscription landing', ru: 'Лендинг подписки на моносортный кофе' },
+    runtime: '4m 12s',
+    steps: [
+      { id: 's1', title: { en: 'Define structure and copy angle', ru: 'Определить структуру и подачу' }, credits: 40 },
+      { id: 's2', title: { en: 'Generate palette and type scale', ru: 'Сгенерировать палитру и типографику' }, credits: 60 },
+      { id: 's3', title: { en: 'Build the page and components', ru: 'Собрать страницу и компоненты' }, credits: 160 },
+      { id: 's4', title: { en: 'Responsive pass, audit and deploy', ru: 'Адаптив, аудит и деплой' }, credits: 60 },
+    ],
+  },
+  {
+    id: 'deck',
+    label: { en: 'Investor deck', ru: 'Инвест-дек' },
+    prompt: { en: 'Seed deck from our metrics CSV', ru: 'Seed-дек из наших метрик' },
+    runtime: '6m 48s',
+    steps: [
+      { id: 's5', title: { en: 'Extract metrics and narrative', ru: 'Вытащить метрики и нарратив' }, credits: 80 },
+      { id: 's6', title: { en: 'Compose seven slides', ru: 'Сложить семь слайдов' }, credits: 220 },
+      { id: 's7', title: { en: 'Render deck and export', ru: 'Отрендерить дек и экспортировать' }, credits: 240 },
+    ],
+  },
+  {
+    id: 'research',
+    label: { en: 'Market scan', ru: 'Сканирование рынка' },
+    prompt: { en: 'Map of AI coding tools sold in the EU', ru: 'Карта ИИ-инструментов кодинга в ЕС' },
+    runtime: '21m 05s',
+    steps: [
+      { id: 's8', title: { en: 'Plan the slice fleet', ru: 'Спланировать флот срезов' }, credits: 120 },
+      { id: 's9', title: { en: 'Fetch and cross-check sources', ru: 'Собрать и перепроверить источники' }, credits: 900 },
+      { id: 's10', title: { en: 'Merge the report', ru: 'Слить отчёт' }, credits: 820 },
+    ],
+  },
+  {
+    id: 'game',
+    label: { en: 'Arcade game', ru: 'Аркада' },
+    prompt: { en: 'One-button arcade with real juice', ru: 'Аркада на одну кнопку с сочностью' },
+    runtime: '9m 33s',
+    steps: [
+      { id: 's11', title: { en: 'Design the loop and juice', ru: 'Придумать цикл и сочность' }, credits: 90 },
+      { id: 's12', title: { en: 'Build canvas engine', ru: 'Собрать canvas-движок' }, credits: 430 },
+      { id: 's13', title: { en: 'Playtest and ship', ru: 'Плейтест и отгрузка' }, credits: 240 },
+    ],
+  },
+]
 import { cn } from '@/lib/cn'
 import { Mockup, type MockKind } from '@/components/ui/Mockups'
 
@@ -22,7 +73,7 @@ export function HeroRunPreview() {
   const [scenarioIndex, setScenarioIndex] = useState(0)
   const [stepIndex, setStepIndex] = useState(0)
 
-  const scenario = scenarios[scenarioIndex]
+  const scenario = REEL[scenarioIndex]
   const steps = scenario.steps
   const mock = mockByScenario[scenario.id] ?? 'site'
 
@@ -32,7 +83,7 @@ export function HeroRunPreview() {
     const timer = window.setInterval(() => {
       setStepIndex((current) => {
         if (current + 1 >= steps.length) {
-          setScenarioIndex((s) => (s + 1) % scenarios.length)
+          setScenarioIndex((s) => (s + 1) % REEL.length)
           return 0
         }
         return current + 1
@@ -107,7 +158,7 @@ export function HeroRunPreview() {
           </ul>
 
           <div className="mt-auto hidden gap-1.5 pt-4 sm:flex">
-            {scenarios.map((s, i) => (
+            {REEL.map((s, i) => (
               <button
                 key={s.id}
                 type="button"

@@ -1,6 +1,6 @@
 # RS-BUILDER
 
-**ИИ-агент, который отдаёт готовый артефакт, а не совет.** Лендинг + прайсинг + бренд-кит + интерактивный воркспейс с симуляцией запуска агента. Один код-бейс, две темы, два языка (EN/RU), ноль внешних ассетов: вся графика нарисована CSS/SVG.
+**ИИ-агент, который отдаёт готовый артефакт, а не совет.** Лендинг + прайсинг + бренд-кит + воркспейс, который крутит настоящего агента на живых LLM. Один код-бейс, две темы, два языка (EN/RU), ноль внешних ассетов: вся графика нарисована CSS/SVG.
 
 Проект — оригинальная реализация в духе современных лендингов AI-агентов (структура: announcement-бар → hero с композером → возможности → процесс → примеры работ → тарифы с кредитами → FAQ → футер с колонками). **Никакие ассеты, тексты, логотипы или код сторонних продуктов не копировались** — см. `NOTICE.md`.
 
@@ -25,14 +25,11 @@ npm run dev            # http://localhost:5173
 npm run build          # прод-сборка в dist/ (с code-splitting)
 npm run preview        # локальный прод-сервер собранного dist/
 
-npm run build:preview  # ОДИН самодостаточный HTML → preview/rs-builder.html
-                       # (открывается с диска, работает без сети и без сервера)
-
 npm run smoke          # headless-проверка: jsdom грузит приложение,
                        # прогоняет все роуты и живой запуск агента
 ```
 
-Демо-режим воркспейса работает без API-ключа: сценарии зашиты в `src/data/scenarios.ts`, а любой произвольный промпт получает правдоподобный ad-hoc запуск (`buildAdHocScenario`).
+Симулятора больше нет: воркспейс работает только с живым бэкендом. Без `VITE_AGENT_API_URL` композер честно пишет, что бэкенд не настроен. `src/data/scenarios.ts` — теперь только пресеты промптов.
 
 ## Что внутри
 
@@ -41,7 +38,7 @@ npm run smoke          # headless-проверка: jsdom грузит прил�
 | Лендинг: hero с композером и чипсами, живая превью-панель запуска, возможности, процесс, примеры работ, сравнение, интеграции, отзывы, тарифы-тизер, FAQ, CTA | `src/pages/Home.tsx`, `src/components/home/*` |
 | Тарифы: переключатель месяц/год, 4 плана, кредиты, Team/Enterprise, безопасность, подробная сравнительная таблица, FAQ | `src/pages/Pricing.tsx`, `src/components/pricing/*` |
 | Страницы возможностей `/features/:slug` (9 шт.) с мокапами | `src/pages/Feature.tsx`, `src/data/features.ts` |
-| Воркспейс `/app`: тред с рассуждениями и тул-чипами, план с прогрессом и кредитами, вкладки Preview/Browser/Files/Console, скорость 0.5–4×, стоп/сброс | `src/pages/Workspace.tsx`, `src/components/workspace/*`, `src/lib/agentEngine.ts` |
+| Воркспейс `/app`: тред с рассуждениями и тул-чипами, план с прогрессом и кредитами, вкладки Preview/Browser/Files/Console, стоп/сброс, очередь с реконнектом | `src/pages/Workspace.tsx`, `src/components/workspace/*`, `src/lib/useAgentRun.ts` |
 | Бренд-кит `/brand`: логотипы, палитра с копированием hex, типографика, do/don't, скачивание SVG | `src/pages/Brand.tsx` |
 | Документы `/legal`: about, careers, changelog, security, terms, privacy | `src/pages/Legal.tsx`, `src/data/legal.ts` |
 | Auth `/login`, `/signup` (демо: любые данные ведут в воркспейс) | `src/pages/Auth.tsx` |
@@ -64,7 +61,6 @@ npm run smoke          # headless-проверка: jsdom грузит прил�
 - **Netlify**: `public/_redirects` отдаёт `/* → /index.html`.
 - **Docker/nginx**: `docker build -t rs-builder . && docker run -p 8080:8080 rs-builder` (конфиг `nginx.conf`, кэш `/assets` на год, gzip).
 - **Любой статик-хостинг**: соберите `npm run build` и положите `dist/` — нужен SPA-fallback на `/index.html`.
-- **Без сервера вообще**: `npm run build:preview` → один файл `preview/rs-builder.html` (hash-роутинг, всё инлайном).
 
 ## Проверки
 
@@ -78,10 +74,9 @@ Vite 6 · React 18 · TypeScript (strict) · Tailwind CSS v4 · React Router 6 �
 
 ---
 
-## Живой агентский бэкенд (вместо симулятора)
+## Живой агентский бэкенд (единственный движок)
 
-По умолчанию воркспейс крутит встроенный симулятор (`src/data/scenarios.ts`). Если задан
-`VITE_AGENT_API_URL`, приложение стримит запуск с бэкенда по SSE:
+Воркспейс стримит запуск с бэкенда по SSE (`VITE_AGENT_API_URL`):
 
 ```bash
 npm run server                                   # zero-deps reference server → :8787
@@ -94,31 +89,15 @@ npm run dev                                      # воркспейс покаж
 (`plan → thought/tool/console/file → progress → artifact → delivered → done`),
 подключается без правок UI. Отмена запроса рвёт SSE-поток, сервер останавливает генерацию.
 
-Готовые однофайловые сборки в `preview/`:
-- `rs-builder.html` — симулятор (работает офлайн);
-- `rs-builder-live.html` — собран с `VITE_AGENT_API_URL=http://localhost:8787`:
-  поднимите `npm run server`, откройте файл через любой статик-сервер
-  (`python3 -m http.server` в папке `preview/`) и получите живой прогон.
-
-Важно: `build:preview` очищает папку `preview/` перед сборкой (стандартное поведение
-Vite для outDir), поэтому live-версию собирайте в отдельную папку и кладите рядом:
-
-```bash
-VITE_AGENT_API_URL=http://localhost:8787 npx vite build --config vite.config.preview.ts --outDir .preview-live
-mv .preview-live/index.html preview/rs-builder-live.html && rm -rf .preview-live
-npm run build:preview && mv preview/index.html preview/rs-builder.html   # симулятор последним
-```
-
 Проверки бэкенда:
 - `npm run test:backend` — standalone сервер: health, последовательность событий, локализация, abort;
 - `npm run test:api` — Vercel-функции `api/runs.mjs` и `api/health.mjs` с мок-объектами req/res.
 
-Оба транспорта крутят один движок `server/engine.mjs`: настоящий LLM-оркестратор
-(`server/orchestrator.mjs`, tool-calling цикл с реальным выполнением кода и web-fetch)
-при наличии ключа провайдера, иначе детерминированное ядро `server/core.mjs`.
-Контракт событий одинаковый, поэтому транспорт и UI не зависят от выбора движка.
-Подробности и переменные окружения — в `DEPLOY.md`, раздел 6; тест цикла без ключа:
-`npm run test:orchestrator`.
+Оба транспорта крутят один движок `server/engine.mjs` = LLM-оркестратор
+(`server/orchestrator.mjs`, tool-calling цикл с реальным выполнением кода и web-fetch).
+Детерминированного ядра больше нет: без доступных провайдеров запуск честно падает
+с причиной в треде, а не притворяется работой. Подробности и переменные окружения —
+в `DEPLOY.md`, раздел 6; тест цикла на мок-LLM: `npm run test:orchestrator`.
 Прод на Vercel использует same-origin `/api` (`VITE_AGENT_API_URL=/api`), локальная
 разработка — standalone сервер; выкатка одной командой: `npm run deploy:vercel`.
 
@@ -160,8 +139,8 @@ API-ключей провайдеров. Свои ключи хранятся т
 
 Устойчивость цепочки: любая ошибка звена (401/402/403/404/429/5xx, таймаут, сеть) —
 переход к следующей модели; на 429 с далёким `x-ratelimit-reset` провайдер уходит
-в cooldown до сброса квоты; если мертвы все — запуск мягко падает на детерминированное
-ядро (продукт никогда не ломается). Модель, которая фактически выполнила запуск,
+в cooldown до сброса квоты; если мертвы все — запуск честно завершается ошибкой
+с причиной в треде (симулятора больше нет — продукт не притворяется). Модель, которая фактически выполнила запуск,
 приходит в SSE-событии `model` и отображается чипом «⚡ provider/model» в воркспейсе.
 
 ## Блог
@@ -176,4 +155,4 @@ API-ключей провайдеров. Свои ключи хранятся т
 npm run release   # typecheck → build → single-file → smoke → backend contract → release/
 ```
 
-В `release/` ложатся: `dist/`, `rs-builder.html`, `agent-server.mjs`, документы и `VERSION`.
+В `release/` ложатся: `dist/`, `server/`, `api/`, документы и `VERSION`.

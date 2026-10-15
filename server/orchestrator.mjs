@@ -1,7 +1,7 @@
 /**
  * Real LLM orchestrator for RS-BUILDER.
  *
- * Unlike server/core.mjs (a deterministic script), this drives an actual
+ * The single execution engine of RS-BUILDER: this drives an actual
  * tool-calling loop against an LLM and maps every model decision onto the
  * SSE contract the UI already speaks:
  *
@@ -420,7 +420,7 @@ export const llmConfigured = (runtime) => enabledProviderIds(runtime).length > 0
 
 export function engineInfo(runtime) {
   const ids = enabledProviderIds(runtime)
-  if (!ids.length) return { engine: 'deterministic', provider: null, model: null }
+  if (!ids.length) return { engine: 'off', provider: null, model: null }
   const pinned = process.env.OPENAI_MODEL && process.env.OPENAI_MODEL !== 'auto-free' ? process.env.OPENAI_MODEL : null
   return { engine: 'llm', providers: ids, model: pinned ?? 'auto (free discovery, $0)' }
 }
@@ -914,8 +914,7 @@ export async function* runOrchestrated(prompt, locale, signal, runtime) {
   }
 
   if (!plan) {
-    yield { type: 'message', role: 'agent', text: L('The orchestrator could not produce a plan; handing over to the deterministic engine.', 'Оркестратор не смог составить план; передаю работу детерминированному движку.') }
-    return yield* (await import('./core.mjs')).runEvents(prompt, locale, signal)
+    throw new Error('the model could not produce a plan after 3 attempts')
   }
 
   if (!cp) {
