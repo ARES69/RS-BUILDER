@@ -655,13 +655,20 @@ async function chat(entries, system, turns, signal) {
       lastError = lastError ?? new Error(entry.id + ' is cooling down (account quota)')
       continue
     }
-    try {
-      const result = await chatOnce(entry, system, turns, signal)
-      result.model = entry.id + '/' + entry.model
-      return result
-    } catch (error) {
-      if (signal?.aborted) throw error
-      lastError = error
+    // Groq-style transient 400s ("Parsing failed / failed_generation": the model
+    // emitted malformed tool-call JSON) deserve one retry on the SAME model
+    // before we declare the link dead and move on.
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        const result = await chatOnce(entry, system, turns, signal)
+        result.model = entry.id + '/' + entry.model
+        return result
+      } catch (error) {
+        if (signal?.aborted) throw error
+        lastError = error
+        if (attempt === 0 && /Parsing failed|failed_generation|Tool call validation failed/i.test(String(error?.message ?? ''))) continue
+        break
+      }
     }
   }
   throw lastError ?? new Error('no models available')

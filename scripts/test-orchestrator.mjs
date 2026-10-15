@@ -67,6 +67,12 @@ function llmMockServer(port, { models, recordAuth } = {}) {
         res.setHeader('content-type', 'application/json')
         return res.end(JSON.stringify({ error: { message: 'User not found.', code: 401 } }))
       }
+      if (payload.model === 'parse-flaky' && !hits['parse-flaky-400-served']) {
+        hits['parse-flaky-400-served'] = 1
+        res.statusCode = 400
+        res.setHeader('content-type', 'application/json')
+        return res.end(JSON.stringify({ error: { message: 'Parsing failed. The model generated output that could not be parsed.', code: 'failed_generation' } }))
+      }
       if (payload.model === 'quota-model') {
         res.statusCode = 429
         res.setHeader('content-type', 'application/json')
@@ -159,6 +165,12 @@ if (!searchOk) {
 }
 check(searchOk, 'search_web returned live results into the console trace')
 check(events.some((e) => e.type === 'browse' && /Mock Portal/.test(e.page.title)), 'http_session drove a real cookie-jar request')
+
+/* --- A3: transient 400 parse failure retries on the same model -------- */
+process.env.RSB_LLM_MODEL_CHAIN = 'parse-flaky'
+const flaky = await collect('One welcome screen', 'en')
+check(flaky.model === 'openrouter/parse-flaky' && openRouterMock.hits['parse-flaky-400-served'] === 1 && flaky.events.some((e) => e.type === 'plan'), '400 failed_generation retried once on the same model, run survives → calls=' + openRouterMock.hits['parse-flaky'])
+process.env.RSB_LLM_MODEL_CHAIN = 'dead-key-model, broken-model, mock-model'
 
 /* --- B: anonymous OpenCode-Zen-style provider ------------------------ */
 delete process.env.OPENAI_API_KEY
