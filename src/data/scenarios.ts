@@ -11,8 +11,6 @@ export type PromptPreset = {
   label: Localized
   prompt: Localized
   icon: IconName
-  totalCredits: number
-  runtime: string
 }
 
 export const PRESETS: PromptPreset[] = [
@@ -24,8 +22,6 @@ export const PRESETS: PromptPreset[] = [
       ru: 'Собери лендинг для подписки на моносортный кофе: герой, три тарифа, как это работает, FAQ, футер. Тёплая журнальная палитра, заголовки с засечками.',
     },
     icon: 'globe',
-    totalCredits: 320,
-    runtime: '4m 12s',
   },
   {
     id: 'deck',
@@ -35,8 +31,6 @@ export const PRESETS: PromptPreset[] = [
       ru: 'Преврати наш CSV с метриками в seed-дек: проблема, продукт, тракция, рынок, команда, запрос. Максимум семь слайдов, тёмный и технический стиль.',
     },
     icon: 'presentation',
-    totalCredits: 540,
-    runtime: '6m 48s',
   },
   {
     id: 'research',
@@ -46,8 +40,6 @@ export const PRESETS: PromptPreset[] = [
       ru: 'Wide Research: составь карту всех ИИ-инструментов для кодинга, которые продаются в ЕС, — цены, фичи, команды и где пустые ниши. Со ссылками на источники.',
     },
     icon: 'microscope',
-    totalCredits: 1840,
-    runtime: '21m 05s',
   },
   {
     id: 'game',
@@ -57,7 +49,5 @@ export const PRESETS: PromptPreset[] = [
       ru: 'Сделай аркаду на одну кнопку с настоящей «сочностью»: три экрана, частицы, комбо-очки и локальный лидерборд.',
     },
     icon: 'gamepad',
-    totalCredits: 760,
-    runtime: '9m 33s',
   },
 ]

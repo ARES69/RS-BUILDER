@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { ArrowRight, Clock, Coins, FileStack } from 'lucide-react'
+import { ArrowRight, FileStack } from 'lucide-react'
 import { useI18n } from '@/i18n'
 import { showcase } from '@/data/home'
 import { cn } from '@/lib/cn'
@@ -66,14 +66,6 @@ export function Showcase() {
               </p>
             </div>
 
-            <div className="mt-5 flex flex-wrap gap-4 text-[12.5px] text-muted">
-              <span className="inline-flex items-center gap-1.5">
-                <Clock size={14} className="text-accent" /> {t('showcase.durationLabel')}: {item.runtime}
-              </span>
-              <span className="inline-flex items-center gap-1.5">
-                <Coins size={14} className="text-accent" /> {item.credits} {t('pricing.creditsShort')}
-              </span>
-            </div>
 
             <div className="mt-5">
               <span className="eyebrow inline-flex items-center gap-1.5">

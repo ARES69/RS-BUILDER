@@ -2,7 +2,7 @@ import { useNavigate } from 'react-router-dom'
 import { Sparkles } from 'lucide-react'
 import { useI18n } from '@/i18n'
 import { Composer } from './Composer'
-import { HeroRunPreview } from './HeroRunPreview'
+import { LiveBoard } from './LiveBoard'
 import { Marquee } from '@/components/ui/Marquee'
 import { integrations } from '@/data/home'
 
@@ -67,7 +67,7 @@ export function Hero() {
         </div>
 
         <div className="animate-rise mt-14 w-full max-w-5xl" style={{ animationDelay: '240ms' }}>
-          <HeroRunPreview />
+          <LiveBoard />
         </div>
 
         <div className="mt-16 w-full pb-4">

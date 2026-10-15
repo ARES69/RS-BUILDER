@@ -287,9 +287,6 @@ export default function Workspace() {
                     <span className={cn('block truncate text-[13px] font-semibold', active ? 'text-fg' : 'text-muted')}>
                       {l(scenario.label)}
                     </span>
-                    <span className="mt-0.5 block font-mono text-[10.5px] text-faint">
-                      {scenario.runtime} · {scenario.totalCredits} cr
-                    </span>
                   </span>
                 </button>
               )
@@ -400,9 +397,6 @@ export default function Workspace() {
                       <span className="block text-[13px] font-bold text-fg">{l(scenario.label)}</span>
                       <span className="mt-1 line-clamp-2 block text-[12px] leading-snug text-muted">
                         {l(scenario.prompt)}
-                      </span>
-                      <span className="mt-1.5 block font-mono text-[10.5px] text-faint">
-                        {scenario.runtime} · {scenario.totalCredits} {t('pricing.creditsShort')}
                       </span>
                     </span>
                   </button>
