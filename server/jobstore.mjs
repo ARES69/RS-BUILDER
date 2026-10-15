@@ -98,6 +98,28 @@ export async function getJobDoc(path) {
   }
 }
 
+/** Lists document paths under a prefix (append-only collections). */
+export async function listDocs(prefix) {
+  if (blobToken()) {
+    const { list } = await blob()
+    const out = []
+    let cursor
+    do {
+      const res = await list({ prefix, cursor })
+      cursor = res.cursor
+      for (const b of res.blobs ?? []) out.push(b.pathname)
+    } while (cursor)
+    return out
+  }
+  try {
+    const names = await readdir(fsDir())
+    const key = prefix.replace(/\//g, '__')
+    return names.filter((n) => n.startsWith(key) && n.endsWith('.json')).map((n) => n.slice(0, -5).replace(/__/g, '/'))
+  } catch {
+    return []
+  }
+}
+
 export async function putJobDoc(path, doc) {
   if (blobToken()) {
     const { put } = await blob()

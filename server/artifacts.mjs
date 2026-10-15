@@ -14,7 +14,7 @@
 import { mkdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
-import { getJobDoc, putJobDoc } from './jobstore.mjs'
+import { getJobDoc, listDocs, putJobDoc } from './jobstore.mjs'
 
 const storeId = () => process.env.ARTIFACTS_STORE_ID || null
 export const artifactsKind = () => (storeId() ? 'blob' : 'fs')
@@ -83,16 +83,30 @@ export async function publishArtifact(job, artifact) {
   }
   if (artifact?.html) files.unshift({ name: 'index.html', url: pageUrl, size: artifact.html.length })
 
+  // append-only version document (overwrite reads are eventually consistent)
   const root = job.lineageRoot || job.id
-  const manifest = (await getJobDoc('rsb-artmanifest/' + root)) ?? { root, versions: [] }
-  const version = manifest.versions.length + 1
-  manifest.versions.push({ jobId: job.id, version, createdAt: Date.now(), pageUrl, files: files.length })
-  manifest.updatedAt = Date.now()
-  await putJobDoc('rsb-artmanifest/' + root, manifest)
-
-  return { root, version, pageUrl, files, versions: manifest.versions.length }
+  const before = (await listDocs('rsb-artmanifest/' + root + '/')).length
+  const version = before + 1
+  await putJobDoc('rsb-artmanifest/' + root + '/' + job.id, {
+    jobId: job.id,
+    root,
+    version,
+    createdAt: Date.now(),
+    pageUrl,
+    files,
+  })
+  const versions = before + 1
+  return { root, version, pageUrl, files, versions }
 }
 
+/** Builds the lineage manifest from version docs (newest last). */
 export async function getManifest(root) {
-  return getJobDoc('rsb-artmanifest/' + root)
+  const paths = await listDocs('rsb-artmanifest/' + root + '/')
+  const versions = []
+  for (const p of paths) {
+    const doc = await getJobDoc(p)
+    if (doc?.jobId) versions.push(doc)
+  }
+  versions.sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0))
+  return { root, versions: versions.map((v, i) => ({ ...v, version: i + 1 })) }
 }
