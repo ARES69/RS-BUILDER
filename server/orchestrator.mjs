@@ -23,7 +23,7 @@
  * deadline, code-exec timeout, fetch size cap, private-network blocklist.
  */
 import vm from 'node:vm'
-import { buildPptx, buildSrt, httpSession, searchWeb } from './tools.mjs'
+import { buildPptx, buildSrt, httpSession, searchWeb, zipStore } from './tools.mjs'
 
 const L = (en, ru) => ({ en, ru })
 const both = (text) => ({ en: text, ru: text })
@@ -757,7 +757,7 @@ export async function executeWebFetch(args) {
   }
 }
 
-export function executeCode(args) {
+export function executeCode(args, workspaceFiles) {
   const logs = []
   const sandbox = {
     console: {
@@ -769,6 +769,17 @@ export function executeCode(args) {
     JSON,
     Date,
     Intl,
+    // sandboxed bridge onto the run workspace: the model scripts against its
+    // own files the way an agent scripts against a real filesystem
+    workspace: {
+      list: () => (workspaceFiles ? [...workspaceFiles.keys()] : []),
+      read: (path) => (workspaceFiles ? workspaceFiles.get(String(path)) ?? null : null),
+      write: (path, content) => {
+        if (!workspaceFiles) return false
+        workspaceFiles.set(String(path), String(content))
+        return true
+      },
+    },
   }
   try {
     const context = vm.createContext(sandbox)
@@ -843,7 +854,16 @@ export async function* runOrchestrated(prompt, locale, signal, runtime) {
       if (typeof content === 'string' && content.length < 200_000) files.set(path, content)
     }
   }
-  const turns = [{ role: 'user', content: String(prompt) }]
+  if (runtime?.seedBinaries && typeof runtime.seedBinaries === 'object') {
+    for (const [name, b64] of Object.entries(runtime.seedBinaries)) {
+      if (typeof b64 === 'string') binaries.set(name, Buffer.from(b64, 'base64'))
+    }
+  }
+  // conversational follow-up: inherit the parent's whole dialogue so the
+  // model refines its own previous work instead of starting blind
+  const turns = Array.isArray(runtime?.seedTurns) && runtime.seedTurns.length
+    ? [...runtime.seedTurns, { role: 'user', content: String(prompt) }]
+    : [{ role: 'user', content: String(prompt) }]
   const runId = 'run_' + Math.random().toString(36).slice(2, 10)
   const deadline = Date.now() + 10 * 60 * 1000
   let totalCalls = 0
@@ -1006,7 +1026,7 @@ export async function* runOrchestrated(prompt, locale, signal, runtime) {
           }
           case 'run_code': {
             yield { type: 'tool', stepId: step.id, tool: { name: 'shell', detail: both(String(c.args.note ?? 'running sandboxed code').slice(0, 90)) } }
-            const ran = executeCode(c.args)
+            const ran = executeCode(c.args, files)
             for (const line of ran.text.split('\n').slice(0, 24)) yield { type: 'console', stepId: step.id, line }
             results.push({ id: c.id, text: (ran.ok ? 'stdout:\n' : 'FAILED:\n') + ran.text.slice(0, 3000) })
             break
@@ -1168,6 +1188,15 @@ export async function* runOrchestrated(prompt, locale, signal, runtime) {
   if (!artifact.downloads) artifact.downloads = collectDownloads(files, binaries)
 
   artifact.downloads = collectDownloads(files, binaries)
+  // the whole sandbox as one archive: "give me everything you made"
+  if (files.size > 1) {
+    try {
+      const zip = zipStore([...files.entries()].map(([name, content]) => ({ name, data: Buffer.from(String(content), 'utf8') })))
+      artifact.downloads.push({ name: 'workspace.zip', mime: 'application/zip', base64: Buffer.from(zip).toString('base64') })
+    } catch {
+      /* zip is best-effort */
+    }
+  }
   yield { type: 'artifact', artifact }
   yield {
     type: 'delivered',

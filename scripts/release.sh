@@ -19,11 +19,9 @@ node scripts/test-orchestrator.mjs
 echo "→ packaging release/"
 rm -rf release
 mkdir -p release
-cp -r dist release/dist
-mkdir -p release/server release/api
-cp -r server release/server
-mkdir -p release/api/v1
-cp -r api/v1 release/api/v1
+cp -r dist release/
+cp -r server release/
+cp -r api release/
 cp README.md LICENSE NOTICE.md DEPLOY.md release/
 printf '%s\n' "RS-BUILDER release $(date -u +%Y-%m-%dT%H:%M:%SZ)" > release/VERSION
 
