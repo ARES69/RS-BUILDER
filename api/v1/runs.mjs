@@ -127,33 +127,44 @@ export default async function handler(req, res) {
         if (total > 400_000) seedFiles = Object.fromEntries(Object.entries(seedFiles).slice(0, 8))
       }
     }
-    const job = await createJob({
-      prompt: payload.prompt ?? '',
-      locale: payload.locale,
-      kickToken: randomBytes(16).toString('hex'),
-      ownerId: sessionFromRequest(req) || undefined,
-      lineageRoot,
-      seedFiles,
-      seedTurns,
-      seedBinaries,
-    })
-    kickWorker(workerOrigin(), job)
-    // The kick fetch must be dispatched while this invocation is still alive:
-    // wait for the worker's first heartbeat (or give up after 8s and let the
-    // stream/reaper kick later).
-    for (let i = 0; i < 16; i++) {
-      const fresh = await getJob(job.id)
-      if (fresh && (fresh.status !== 'queued' || (fresh.attempts || 0) > 0)) break
-      await new Promise((r) => setTimeout(r, 500))
+    let job = null
+    try {
+      job = await createJob({
+        prompt: payload.prompt ?? '',
+        locale: payload.locale,
+        kickToken: randomBytes(16).toString('hex'),
+        ownerId: sessionFromRequest(req) || undefined,
+        lineageRoot,
+        seedFiles,
+        seedTurns,
+        seedBinaries,
+      })
+    } catch (storeError) {
+      // Blob store suspended/unavailable: degrade to synchronous streaming
+      // instead of 500-ing — the run still happens, just not persisted/queued
+      job = null
     }
-    res.status(202).json({
-      jobId: job.id,
-      status: job.status,
-      statusUrl: '/api/v1/job?id=' + job.id,
-      streamUrl: '/api/v1/job?id=' + job.id + '&stream=1',
-      cancelUrl: '/api/v1/job?id=' + job.id,
-    })
-    return
+    if (!job) {
+      // fall through to the sync SSE path below
+    } else {
+      kickWorker(workerOrigin(), job)
+      // The kick fetch must be dispatched while this invocation is still alive:
+      // wait for the worker's first heartbeat (or give up after 8s and let the
+      // stream/reaper kick later).
+      for (let i = 0; i < 16; i++) {
+        const fresh = await getJob(job.id)
+        if (fresh && (fresh.status !== 'queued' || (fresh.attempts || 0) > 0)) break
+        await new Promise((r) => setTimeout(r, 500))
+      }
+      res.status(202).json({
+        jobId: job.id,
+        status: job.status,
+        statusUrl: '/api/v1/job?id=' + job.id,
+        streamUrl: '/api/v1/job?id=' + job.id + '&stream=1',
+        cancelUrl: '/api/v1/job?id=' + job.id,
+      })
+      return
+    }
   }
 
   res.status(200)

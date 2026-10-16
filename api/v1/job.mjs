@@ -63,7 +63,7 @@ export default async function handler(req, res) {
       res.write('data: ' + JSON.stringify({ type: 'job_end', status: job.status, error: job.error }) + '\n\n')
       break
     }
-    await sleep(600)
+    await sleep(1500)
   }
   res.end()
 }

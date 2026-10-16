@@ -1185,8 +1185,6 @@ export async function* runOrchestrated(prompt, locale, signal, runtime) {
       : fallbackBrief(prompt, files, locale)
   }
   if (siteFiles.length) artifact.siteFiles = siteFiles
-  if (!artifact.downloads) artifact.downloads = collectDownloads(files, binaries)
-
   artifact.downloads = collectDownloads(files, binaries)
   // the whole sandbox as one archive: "give me everything you made"
   if (files.size > 1) {

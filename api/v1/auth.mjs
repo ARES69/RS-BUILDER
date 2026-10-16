@@ -7,7 +7,7 @@
  */
 import { changePassword, consumeRecoveryCode, createUser, findUserByEmail, findUserById, issueRecoveryCodes, verifyLogin } from '../../server/users.mjs'
 import { clearSessionCookie, sessionCookie, signSession, sessionFromRequest, validEmail, verifyPassword } from '../../server/auth.mjs'
-import { LIMITS, clientIp, hashBucket, rateHit } from '../../server/ratelimit.mjs'
+import { LIMITS, clientIp, hashBucket, rateCheck, rateHit } from '../../server/ratelimit.mjs'
 import { balance, grantSignupCredits } from '../../server/credits.mjs'
 
 async function readBody(req) {
@@ -85,11 +85,14 @@ export default async function handler(req, res) {
     const email = String(payload.email ?? '')
     const ip = clientIp(req)
     const allowed =
-      (await rateHit('login:' + hashBucket(email), LIMITS.loginPerEmail)) &&
-      (await rateHit('loginip:' + hashBucket(ip), LIMITS.loginPerIp))
+      (await rateCheck('login:' + hashBucket(email), LIMITS.loginPerEmail)) &&
+      (await rateCheck('loginip:' + hashBucket(ip), LIMITS.loginPerIp))
     if (!allowed) return res.status(429).json({ error: 'rate limited' })
     const user = await verifyLogin(email, String(payload.password ?? ''))
     if (!user) {
+      // only failures burn write budget
+      await rateHit('login:' + hashBucket(email), LIMITS.loginPerEmail)
+      await rateHit('loginip:' + hashBucket(ip), LIMITS.loginPerIp)
       return res.status(401).json({ error: 'wrong email or password' })
     }
     const session = signSession(user.id)

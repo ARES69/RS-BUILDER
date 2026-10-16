@@ -88,6 +88,33 @@ export function cancelActiveRemote(): void {
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
 
+/** Shared SSE frame parser for sync streams and job tails. */
+async function* sseEvents(response: Response): AsyncGenerator<AgentEvent> {
+  if (!response.body) return
+  const reader = response.body.getReader()
+  const decoder = new TextDecoder()
+  let buffer = ''
+  for (;;) {
+    const { done, value } = await reader.read()
+    if (done) break
+    buffer += decoder.decode(value, { stream: true })
+    let idx: number
+    while ((idx = buffer.indexOf('\n\n')) >= 0) {
+      const chunk = buffer.slice(0, idx)
+      buffer = buffer.slice(idx + 2)
+      const line = chunk.split('\n').find((l) => l.trim().startsWith('data:'))
+      if (!line) continue
+      const payload = line.trim().slice(5).trim()
+      if (!payload) continue
+      try {
+        yield JSON.parse(payload) as AgentEvent
+      } catch {
+        /* skip malformed frame */
+      }
+    }
+  }
+}
+
 /**
  * Queued run: the job lives on the server, this generator only tails it.
  * Closing the tab, losing the network or a frozen worker do not kill the run;
@@ -115,6 +142,13 @@ async function* runQueued(prompt: string, locale: Locale, signal?: AbortSignal, 
     return
   }
   if (!created.ok) throw new RemoteAgentError('Agent backend rejected the job: ' + created.status, created.status)
+  const createdType = created.headers.get('content-type') ?? ''
+  if (createdType.includes('text/event-stream')) {
+    // store outage: the backend degraded this queued request to a sync stream
+    activeJobId = null
+    yield* sseEvents(created)
+    return
+  }
   const info = (await created.json()) as { jobId: string; streamUrl: string; statusUrl: string }
   activeJobId = info.jobId
   yield { type: 'job_meta', jobId: info.jobId, parentJobId: opts?.parentJobId ?? null } as AgentEvent

@@ -13,6 +13,17 @@ const WINDOW_MS = 10 * 60 * 1000
 
 export const hashBucket = (value) => createHash('sha256').update(String(value)).digest('hex').slice(0, 24)
 
+/** Read-only check: is the bucket under the limit right now? (no write) */
+export async function rateCheck(bucket, limit) {
+  try {
+    const win = Math.floor(Date.now() / WINDOW_MS)
+    const count = (await listDocs('rsb-rl/' + bucket + '/' + win + '/')).length
+    return count < limit
+  } catch {
+    return true // store down: fail open (auth stays password-protected)
+  }
+}
+
 /** Returns true when the attempt is allowed (and records it). */
 export async function rateHit(bucket, limit) {
   try {

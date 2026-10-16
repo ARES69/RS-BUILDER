@@ -14,7 +14,7 @@ import { publishArtifact } from './artifacts.mjs'
 import { debitRun } from './credits.mjs'
 import { runEvents } from './engine.mjs'
 
-const BATCH_MS = 400
+const BATCH_MS = 2000 // write budget: hobby Blob limits suspend chatty stores
 const KICK_BEFORE_MS = 30_000 // hand over before the platform freezes us
 
 export async function kickWorker(origin, job) {
@@ -65,6 +65,8 @@ export async function processJob(jobId) {
   try {
     for await (const event of runEvents(job.prompt, job.locale, controller.signal, {
       seedFiles: job.seedFiles,
+      seedTurns: job.seedTurns,
+      seedBinaries: job.seedBinaries,
       checkpoint: job.checkpoint,
       onCheckpoint: (cpState) => {
         job.checkpoint = cpState
@@ -78,7 +80,8 @@ export async function processJob(jobId) {
       }
       buffer.push(event)
       const now = Date.now()
-      if (now - lastBatch > BATCH_MS) {
+      const boundary = ['plan', 'step_done', 'artifact', 'done'].includes(event.type)
+      if (boundary || now - lastBatch > BATCH_MS) {
         await flush()
         lastBatch = now
       }

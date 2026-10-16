@@ -19,6 +19,44 @@ import { reapStaleJobs } from '../../server/reaper.mjs'
 /** Queued runs need a durable store: Vercel Blob on Vercel, fs elsewhere. */
 const queueAvailable = () => jobStoreKind() === 'blob' || !process.env.VERCEL
 
+/**
+ * Conversation condensation for follow-ups: inherited dialogues easily exceed
+ * free-tier TPM windows (groq 413 at ~8k tokens). Old tool payloads carry the
+ * bulk — truncate them and cap the window; the workspace files (not the log)
+ * are the source of truth for the artifact state.
+ */
+const ELIDED_ARG_TOOLS = new Set(['write_file', 'deliver_artifact', 'make_slides', 'make_captions'])
+
+function compressTurns(turns) {
+  if (!Array.isArray(turns) || !turns.length) return null
+  const kept = turns.slice(-28)
+  const cutAt = Math.max(0, kept.length - 4)
+  return kept.map((m, i) => {
+    if (m.role === 'assistant' && Array.isArray(m.toolCalls)) {
+      // the payload of past write/deliver calls lives in the seeded workspace;
+      // keeping the full arguments blows free-tier TPM windows (groq 413)
+      const toolCalls = m.toolCalls.map((c) => {
+        if (ELIDED_ARG_TOOLS.has(c.name)) {
+          let hint = {}
+          try {
+            const a = typeof c.args === 'string' ? JSON.parse(c.args) : c.args
+            hint = { path: a?.path ?? a?.from_file ?? a?.file_name ?? undefined, elided: 'content lives in the workspace' }
+          } catch { /* keep empty hint */ }
+          return { ...c, args: JSON.stringify(hint) }
+        }
+        return c
+      })
+      const content = typeof m.content === 'string' && m.content.length > 400 ? m.content.slice(0, 400) + ' …' : m.content
+      return { ...m, content, toolCalls }
+    }
+    if (m.role === 'tool') {
+      const cap = i < cutAt ? 240 : 1200
+      return { ...m, results: (m.results ?? []).map((r) => ({ ...r, text: String(r.text ?? '').slice(0, cap) + (String(r.text ?? '').length > cap ? ' …' : '') })) }
+    }
+    return m
+  })
+}
+
 export const config = {
   runtime: 'nodejs',
   maxDuration: 300, // long runs stream for minutes, not seconds
@@ -70,11 +108,15 @@ export default async function handler(req, res) {
     }
     let lineageRoot = null
     let seedFiles = null
+    let seedTurns = null
+    let seedBinaries = null
     if (payload.parentJobId) {
       const parent = await getJob(String(payload.parentJobId))
       const owner = sessionFromRequest(req)
       if (parent && (!parent.ownerId || parent.ownerId === owner)) {
         lineageRoot = parent.lineageRoot || parent.id
+        seedTurns = compressTurns(parent.checkpoint?.turns)
+        seedBinaries = parent.checkpoint?.binaries ?? null
         seedFiles = {}
         for (const e of parent.events || []) {
           if (e.type === 'file' && e.file?.path && typeof e.file.content === 'string') seedFiles[e.file.path] = e.file.content
@@ -85,31 +127,44 @@ export default async function handler(req, res) {
         if (total > 400_000) seedFiles = Object.fromEntries(Object.entries(seedFiles).slice(0, 8))
       }
     }
-    const job = await createJob({
-      prompt: payload.prompt ?? '',
-      locale: payload.locale,
-      kickToken: randomBytes(16).toString('hex'),
-      ownerId: sessionFromRequest(req) || undefined,
-      lineageRoot,
-      seedFiles,
-    })
-    kickWorker(workerOrigin(), job)
-    // The kick fetch must be dispatched while this invocation is still alive:
-    // wait for the worker's first heartbeat (or give up after 8s and let the
-    // stream/reaper kick later).
-    for (let i = 0; i < 16; i++) {
-      const fresh = await getJob(job.id)
-      if (fresh && (fresh.status !== 'queued' || (fresh.attempts || 0) > 0)) break
-      await new Promise((r) => setTimeout(r, 500))
+    let job = null
+    try {
+      job = await createJob({
+        prompt: payload.prompt ?? '',
+        locale: payload.locale,
+        kickToken: randomBytes(16).toString('hex'),
+        ownerId: sessionFromRequest(req) || undefined,
+        lineageRoot,
+        seedFiles,
+        seedTurns,
+        seedBinaries,
+      })
+    } catch (storeError) {
+      // Blob store suspended/unavailable: degrade to synchronous streaming
+      // instead of 500-ing — the run still happens, just not persisted/queued
+      job = null
     }
-    res.status(202).json({
-      jobId: job.id,
-      status: job.status,
-      statusUrl: '/api/v1/job?id=' + job.id,
-      streamUrl: '/api/v1/job?id=' + job.id + '&stream=1',
-      cancelUrl: '/api/v1/job?id=' + job.id,
-    })
-    return
+    if (!job) {
+      // fall through to the sync SSE path below
+    } else {
+      kickWorker(workerOrigin(), job)
+      // The kick fetch must be dispatched while this invocation is still alive:
+      // wait for the worker's first heartbeat (or give up after 8s and let the
+      // stream/reaper kick later).
+      for (let i = 0; i < 16; i++) {
+        const fresh = await getJob(job.id)
+        if (fresh && (fresh.status !== 'queued' || (fresh.attempts || 0) > 0)) break
+        await new Promise((r) => setTimeout(r, 500))
+      }
+      res.status(202).json({
+        jobId: job.id,
+        status: job.status,
+        statusUrl: '/api/v1/job?id=' + job.id,
+        streamUrl: '/api/v1/job?id=' + job.id + '&stream=1',
+        cancelUrl: '/api/v1/job?id=' + job.id,
+      })
+      return
+    }
   }
 
   res.status(200)
