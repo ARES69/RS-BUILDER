@@ -136,7 +136,7 @@ export async function putJobDoc(path, doc) {
   return doc
 }
 
-export async function createJob({ prompt, locale, kickToken, ownerId, lineageRoot, seedFiles, seedTurns, seedBinaries }) {
+export async function createJob({ prompt, locale, kickToken, ownerId, lineageRoot, seedFiles }) {
   const job = {
     ownerId: ownerId || null,
     id: 'job_' + Math.random().toString(36).slice(2, 10) + Date.now().toString(36).slice(-4),
@@ -153,8 +153,6 @@ export async function createJob({ prompt, locale, kickToken, ownerId, lineageRoo
     kickToken,
     lineageRoot: lineageRoot || null,
     seedFiles: seedFiles || null,
-    seedTurns: seedTurns || null,
-    seedBinaries: seedBinaries || null,
   }
   return putJobDoc(prefix + job.id, job)
 }

@@ -23,7 +23,7 @@
  * deadline, code-exec timeout, fetch size cap, private-network blocklist.
  */
 import vm from 'node:vm'
-import { buildPptx, buildSrt, httpSession, searchWeb, zipStore } from './tools.mjs'
+import { buildPptx, buildSrt, httpSession, searchWeb } from './tools.mjs'
 
 const L = (en, ru) => ({ en, ru })
 const both = (text) => ({ en: text, ru: text })
@@ -80,6 +80,24 @@ const TOOLS = [
     name: 'run_code',
     description: 'Execute JavaScript in a sandboxed VM (no fs/net/process). stdout and the completion value are returned.',
     schema: { type: 'object', properties: { code: { type: 'string' }, note: { type: 'string' } }, required: ['code'] },
+  },
+  {
+    name: 'edit_file',
+    description: 'Surgically patch a workspace file: replace the first exact occurrence of old_text with new_text. Prefer over rewriting whole files.',
+    schema: {
+      type: 'object',
+      properties: {
+        path: { type: 'string' },
+        old_text: { type: 'string', description: 'Exact substring to replace (first occurrence)' },
+        new_text: { type: 'string' },
+      },
+      required: ['path', 'old_text', 'new_text'],
+    },
+  },
+  {
+    name: 'list_files',
+    description: 'List workspace files with sizes. Use before editing to confirm paths.',
+    schema: { type: 'object', properties: {} },
   },
   {
     name: 'write_file',
@@ -739,7 +757,7 @@ export async function executeWebFetch(args) {
   }
 }
 
-export function executeCode(args, workspaceFiles) {
+export function executeCode(args) {
   const logs = []
   const sandbox = {
     console: {
@@ -751,17 +769,6 @@ export function executeCode(args, workspaceFiles) {
     JSON,
     Date,
     Intl,
-    // sandboxed bridge onto the run workspace: the model scripts against its
-    // own files the way an agent scripts against a real filesystem
-    workspace: {
-      list: () => (workspaceFiles ? [...workspaceFiles.keys()] : []),
-      read: (path) => (workspaceFiles ? workspaceFiles.get(String(path)) ?? null : null),
-      write: (path, content) => {
-        if (!workspaceFiles) return false
-        workspaceFiles.set(String(path), String(content))
-        return true
-      },
-    },
   }
   try {
     const context = vm.createContext(sandbox)
@@ -813,6 +820,7 @@ function systemPrompt(locale) {
     '3. Use run_code for computations, search_web + web_fetch for external facts, wide_research for multi-entity landscapes, make_slides for real PPTX decks, make_captions for SRT, http_session for form/portal flows, write_file/read_file for workspace files.',
     '4. After finishing each step call step_done with a one-line summary.',
     '5. Write documents with write_file in chunks smaller than 4KB, then call deliver_artifact with {title, from_file} pointing at the final .html (do not repeat the html inline).',
+    '5b. Websites may be MULTI-FILE: index.html + styles.css + app.js with relative links — the whole tree gets hosted permanently. Fix files with edit_file (exact first-occurrence patch), never rewrite whole files for small changes. list_files before editing.',
     '6. Keep artifacts compact: one screen, inline CSS, no external requests, no placeholders. If a tool reports truncation, retry with smaller content.',
     'Keep notes concise and factual. Never invent tool output. If a tool fails, say so and adapt.',
     'Write every user-visible string (intro, think notes, summaries, step titles, artifact text) in ' + lang + '. This is mandatory, including inside tool arguments.',
@@ -835,16 +843,7 @@ export async function* runOrchestrated(prompt, locale, signal, runtime) {
       if (typeof content === 'string' && content.length < 200_000) files.set(path, content)
     }
   }
-  if (runtime?.seedBinaries && typeof runtime.seedBinaries === 'object') {
-    for (const [name, b64] of Object.entries(runtime.seedBinaries)) {
-      if (typeof b64 === 'string') binaries.set(name, Buffer.from(b64, 'base64'))
-    }
-  }
-  // conversational follow-up: inherit the parent's whole dialogue so the
-  // model refines its own previous work instead of starting blind
-  const turns = Array.isArray(runtime?.seedTurns) && runtime.seedTurns.length
-    ? [...runtime.seedTurns, { role: 'user', content: String(prompt) }]
-    : [{ role: 'user', content: String(prompt) }]
+  const turns = [{ role: 'user', content: String(prompt) }]
   const runId = 'run_' + Math.random().toString(36).slice(2, 10)
   const deadline = Date.now() + 10 * 60 * 1000
   let totalCalls = 0
@@ -1007,7 +1006,7 @@ export async function* runOrchestrated(prompt, locale, signal, runtime) {
           }
           case 'run_code': {
             yield { type: 'tool', stepId: step.id, tool: { name: 'shell', detail: both(String(c.args.note ?? 'running sandboxed code').slice(0, 90)) } }
-            const ran = executeCode(c.args, files)
+            const ran = executeCode(c.args)
             for (const line of ran.text.split('\n').slice(0, 24)) yield { type: 'console', stepId: step.id, line }
             results.push({ id: c.id, text: (ran.ok ? 'stdout:\n' : 'FAILED:\n') + ran.text.slice(0, 3000) })
             break
@@ -1022,6 +1021,29 @@ export async function* runOrchestrated(prompt, locale, signal, runtime) {
               file: { path, kind: path.endsWith('.json') ? 'json' : path.endsWith('.html') ? 'html' : path.endsWith('.md') ? 'md' : 'code', content: String(c.args.content ?? '').slice(0, 4000), bytes: (c.args.content ?? '').length + ' B' },
             }
             results.push({ id: c.id, text: 'wrote ' + path + ' (' + (c.args.content ?? '').length + ' bytes)' })
+            break
+          }
+          case 'edit_file': {
+            const path = String(c.args.path ?? '')
+            const oldText = String(c.args.old_text ?? '')
+            const newText = String(c.args.new_text ?? '')
+            const current = files.get(path)
+            if (current === undefined) {
+              results.push({ id: c.id, text: 'FAILED: no such file: ' + path })
+              break
+            }
+            if (!oldText || !current.includes(oldText)) {
+              results.push({ id: c.id, text: 'FAILED: old_text not found in ' + path + ' (use list_files/read_file to check the exact content)' })
+              break
+            }
+            files.set(path, current.replace(oldText, newText))
+            yield { type: 'tool', stepId: step.id, tool: { name: 'editor', detail: both('Patching ' + path) } }
+            results.push({ id: c.id, text: 'patched ' + path + ' (' + oldText.length + ' → ' + newText.length + ' chars)' })
+            break
+          }
+          case 'list_files': {
+            const listing = [...files.entries()].map(([p, c]) => p + ' (' + String(c).length + ' B)')
+            results.push({ id: c.id, text: listing.length ? listing.join('\n') : 'workspace is empty' })
             break
           }
           case 'read_file': {
@@ -1132,22 +1154,20 @@ export async function* runOrchestrated(prompt, locale, signal, runtime) {
 
   /* --- artifact: requested, or synthesized from the workspace ------- */
   checkpoint(plan.length, 'artifact')
+  const siteFiles = [...files.entries()]
+    .filter(([p, c]) => /\.(html|css|js|mjs|json|svg|md|txt)$/.test(p) && typeof c === 'string' && c.length < 400_000)
+    .slice(0, 40)
+    .map(([path, content]) => ({ path, content }))
   if (!artifact) {
     const htmlFile = [...files.entries()].find(([path]) => path.endsWith('.html'))
     artifact = htmlFile
       ? { title: both(htmlFile[0]), fileName: htmlFile[0], kind: 'html', html: htmlFile[1], note: L('Assembled from workspace files', 'Собрано из файлов воркспейса') }
       : fallbackBrief(prompt, files, locale)
   }
+  if (siteFiles.length) artifact.siteFiles = siteFiles
+  if (!artifact.downloads) artifact.downloads = collectDownloads(files, binaries)
+
   artifact.downloads = collectDownloads(files, binaries)
-  // the whole sandbox as one archive: "give me everything you made"
-  if (files.size > 1) {
-    try {
-      const zip = zipStore([...files.entries()].map(([name, content]) => ({ name, data: Buffer.from(String(content), 'utf8') })))
-      artifact.downloads.push({ name: 'workspace.zip', mime: 'application/zip', base64: Buffer.from(zip).toString('base64') })
-    } catch {
-      /* zip is best-effort */
-    }
-  }
   yield { type: 'artifact', artifact }
   yield {
     type: 'delivered',

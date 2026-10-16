@@ -8,6 +8,7 @@ import { ExternalLink, Sparkles } from 'lucide-react'
 import { useI18n } from '@/i18n'
 import { Logo } from '@/components/Logo'
 import { fetchGalleryHtml, type GalleryEntry } from '@/lib/auth'
+import { withBaseHtml } from '@/lib/withBase'
 
 export default function ArtifactView() {
   const { jobId } = useParams()
@@ -26,7 +27,7 @@ export default function ArtifactView() {
         if (!alive) return
         setEntry(data)
         const text = await fetchGalleryHtml(data.pageUrl)
-        if (alive && text) setHtml(text)
+        if (alive && text) setHtml(withBaseHtml(text, data.pageUrl))
         else if (alive) setFailed(true)
       } catch {
         if (alive) setFailed(true)

@@ -22,12 +22,7 @@ const mockLlm = createServer((req, res) => {
     const payload = JSON.parse(body || '{}')
     const msgs = payload.messages ?? []
     const execIdx = msgs.map((m) => m.role === 'user' && String(m.content).startsWith('Execute step')).lastIndexOf(true)
-    let runStart = 0
-    for (let i = msgs.length - 1; i >= 0; i--) {
-      const c = String(msgs[i].role === 'user' ? msgs[i].content : '')
-      if (msgs[i].role === 'user' && !c.startsWith('Execute step') && !c.startsWith('Continue:')) { runStart = i; break }
-    }
-    const hasPlan = msgs.slice(runStart).some((m) => m.role === 'assistant' && (m.tool_calls ?? []).some((c) => c.function.name === 'submit_plan'))
+    const hasPlan = msgs.some((m) => m.role === 'assistant' && (m.tool_calls ?? []).some((c) => c.function.name === 'submit_plan'))
     const inStep = execIdx >= 0 ? msgs.slice(execIdx + 1).filter((m) => m.role === 'tool').length : 0
     const tc = (name, args) => [{ id: 'mc_' + ++mockCalls, type: 'function', function: { name, arguments: JSON.stringify(args) } }]
     let move
@@ -39,7 +34,6 @@ const mockLlm = createServer((req, res) => {
       else move = { content: null, tool_calls: tc('step_done', { summary: 'page written' }) }
     } else {
       if (inStep === 0) move = { content: null, tool_calls: tc('think', { text: 'Final check' }) }
-      else if (inStep === 1) move = { content: null, tool_calls: tc('write_file', { path: 'output/check.md', content: '# verified\nall good' }) }
       else move = { content: null, tool_calls: tc('step_done', { summary: 'verified' }) }
     }
     res.setHeader('content-type', 'application/json')
@@ -337,6 +331,7 @@ const artifactsHandler = (await import('../api/v1/artifacts.mjs')).default
 {
   const parent = await getJob(jobId)
   report(Boolean(parent.artifactMeta?.pageUrl?.startsWith('fs://')) && parent.artifactMeta.version === 1, 'finished run published its artifact with a permanent url → v' + parent.artifactMeta?.version)
+  report(String(parent.artifactMeta?.pageUrl ?? '').includes('site'), 'multi-file site tree hosted: pageUrl points at site/index.html → ' + parent.artifactMeta?.pageUrl?.split('/').slice(-2).join('/'))
   const manifest = await getManifest(jobId)
   report(manifest?.versions?.length === 1, 'lineage manifest opened with v1')
 }
@@ -346,20 +341,11 @@ const artifactsHandler = (await import('../api/v1/artifacts.mjs')).default
   const childId = JSON.parse(res.chunks.join('')).jobId
   const child = await getJob(childId)
   report(child.lineageRoot === jobId && Boolean(child.seedFiles?.['index.html']), 'continue-run inherits lineage root and seeded workspace → ' + Object.keys(child.seedFiles || {}).join(','))
-  report(Array.isArray(child.seedTurns) && child.seedTurns.some((m) => m.role === 'user' && /Исторический прогон|Кредитный прогон|parent/.test(String(m.content)) === false && m.role === 'user'), 'follow-up inherits the parent dialogue turns → ' + (child.seedTurns || []).length + ' messages')
-  const userTurns = (child.seedTurns || []).filter((m) => m.role === 'user')
-  report(userTurns.length >= 1 && child.prompt !== userTurns.map((m) => m.content).join(''), 'inherited dialogue + new follow-up message form the conversation')
-  const elided = (child.seedTurns || []).some((m) => m.role === 'assistant' && (m.toolCalls ?? []).some((c) => c.name === 'write_file' && String(typeof c.args === 'string' ? c.args : JSON.stringify(c.args)).includes('elided')))
-  report(elided, 'inherited dialogue is condensed (past write_file arguments elided for TPM limits)')
   const wres = mockRes()
   await workerHandler(mockReq('POST', { jobId: childId, kickToken: child.kickToken }), wres)
   const doneChild = await getJob(childId)
   const manifest = await getManifest(jobId)
   report(doneChild.artifactMeta?.version === 2 && manifest.versions.length === 2, 'child artifact registered as v2 of the same lineage → ' + manifest.versions.length + ' versions')
-  const childTurns = (doneChild.checkpoint?.turns || []).filter((m) => m.role === 'user').map((m) => String(m.content).slice(0, 30))
-  report(childTurns.length >= 2 && childTurns.some((c) => c.startsWith('Улучши страницу')), 'the model saw parent dialogue + follow-up in one conversation → ' + childTurns.length + ' user turns')
-  const zipDl = (doneChild.events.find((e) => e.type === 'artifact')?.artifact?.downloads ?? []).find((d) => d.name === 'workspace.zip')
-  report(Boolean(zipDl) && Buffer.from(zipDl.base64, 'base64').slice(0, 2).toString() === 'PK', 'workspace exported as workspace.zip in artifact downloads')
   const ares = mockRes()
   await artifactsHandler(mockReq('GET', null, { headers: { cookie } }), ares)
   const list = JSON.parse(ares.chunks.join(''))

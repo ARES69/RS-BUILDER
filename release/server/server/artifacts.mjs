@@ -77,6 +77,14 @@ export async function publishArtifact(job, artifact) {
   if (artifact?.html) {
     pageUrl = await publishOne(base + '/index.html', artifact.html, CONTENT_TYPES.html)
   }
+  // multi-file site tree: relative assets (css/js/svg…) resolve next to index
+  let siteUrl = null
+  for (const f of artifact?.siteFiles ?? []) {
+    const url = await publishOne(base + '/site/' + f.path, f.content, typeOf(f.path))
+    files.push({ name: 'site/' + f.path, url, size: String(f.content).length })
+    if (!siteUrl && /\.html?$/.test(f.path)) siteUrl = url
+  }
+  if (siteUrl) pageUrl = siteUrl
   for (const dl of artifact?.downloads ?? []) {
     if (!dl?.name || !dl?.base64) continue
     const buf = Buffer.from(dl.base64, 'base64')

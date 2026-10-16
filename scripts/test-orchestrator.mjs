@@ -14,14 +14,7 @@ function nextMove(messages) {
   const execFlags = messages.map((m) => m.role === 'user' && String(m.content).startsWith('Execute step'))
   const lastExecIdx = execFlags.lastIndexOf(true)
   const inStep = lastExecIdx >= 0 ? messages.slice(lastExecIdx + 1).filter((m) => m.role === 'tool').length : 0
-  // plan detection scoped to THIS run: the last plain user message is the
-  // current prompt (follow-ups inherit the parent dialogue above it)
-  let runStart = 0
-  for (let i = messages.length - 1; i >= 0; i--) {
-    const c = String(messages[i].role === 'user' ? messages[i].content : '')
-    if (messages[i].role === 'user' && !c.startsWith('Execute step') && !c.startsWith('Continue:')) { runStart = i; break }
-  }
-  const hasPlan = messages.slice(runStart).some((m) => m.role === 'assistant' && (m.tool_calls ?? []).some((c) => c.function.name === 'submit_plan'))
+  const hasPlan = messages.some((m) => m.role === 'assistant' && (m.tool_calls ?? []).some((c) => c.function.name === 'submit_plan'))
   const tc = (name, args) => [{ id: 'call_' + ++callCount, type: 'function', function: { name, arguments: JSON.stringify(args) } }]
 
   if (!hasPlan) {
@@ -38,10 +31,12 @@ function nextMove(messages) {
   }
   const step = execFlags.filter(Boolean).length || 1
   if (step === 1) {
-    if (inStep === 0) return { content: null, tool_calls: tc('think', { text: 'Single portable HTML file, zero external requests.' }) }
+    if (inStep === 0) return { content: null, tool_calls: tc('think', { text: 'Multi-file site: index + stylesheet, then a surgical patch.' }) }
     if (inStep === 1) return { content: null, tool_calls: tc('run_code', { note: 'verify totals', code: "const totals=[120,80,40]; console.log('2+2=', 2+2); console.log('sum=', totals.reduce((a,b)=>a+b,0)); totals.length" }) }
-    if (inStep === 2) return { content: null, tool_calls: tc('write_file', { path: 'index.html', content: '<!doctype html><html><head><meta charset="utf-8"><title>Mock build</title></head><body><h1>Built by the orchestrator</h1></body></html>' }) }
-    return { content: null, tool_calls: tc('step_done', { summary: 'page written and verified' }) }
+    if (inStep === 2) return { content: null, tool_calls: tc('write_file', { path: 'index.html', content: '<!doctype html><html><head><meta charset="utf-8"><link rel="stylesheet" href="styles.css"><title>Mock build</title></head><body><h1>Built by the orchestrator</h1><p>TODO-EDIT</p></body></html>' }) }
+    if (inStep === 3) return { content: null, tool_calls: tc('write_file', { path: 'styles.css', content: 'body{background:#0b0b11;color:#f4f4f1}' }) }
+    if (inStep === 4) return { content: null, tool_calls: tc('edit_file', { path: 'index.html', old_text: 'TODO-EDIT', new_text: 'EDITED-OK via edit_file' }) }
+    return { content: null, tool_calls: tc('step_done', { summary: 'multi-file site written and patched' }) }
   }
   if (inStep === 0) return { content: null, tool_calls: tc('search_web', { query: 'vite build tool' }) }
   if (inStep === 1) return { content: null, tool_calls: tc('make_slides', { title: 'Mock deck', file_name: 'deck.pptx', slides: [{ title: 'One', bullets: ['a', 'b'] }, { title: 'Two', bullets: ['c'] }] }) }
@@ -163,7 +158,10 @@ check(model === 'openrouter/mock-model', 'chain skips the 401 and 402 models and
 check(types[0] === 'run_start' && types.at(-1) === 'done', 'run_start … done sequence (' + events.length + ' events)')
 check(plan?.steps?.length === 2, 'plan streamed from the mock LLM (2 steps)')
 check(consoleLines.some((l) => l.includes('2+2= 4')) && consoleLines.some((l) => l.includes('sum= 240')), 'run_code really executed in the vm sandbox → ' + JSON.stringify(consoleLines.slice(0, 3)))
-check(files.includes('index.html') && files.includes('captions.srt'), 'workspace files written (html + srt) → ' + files.join(', '))
+check(files.includes('index.html') && files.includes('captions.srt') && files.includes('styles.css'), 'workspace files written (html + css + srt) → ' + files.join(', '))
+const artEvent = events.find((e) => e.type === 'artifact')
+check(Boolean(artEvent?.artifact?.html?.includes('EDITED-OK')), 'edit_file patch landed in the delivered artifact')
+check((artEvent?.artifact?.siteFiles ?? []).some((f) => f.path === 'styles.css'), 'artifact carries the multi-file site tree → ' + (artEvent?.artifact?.siteFiles ?? []).map((f) => f.path).join(','))
 check(artifact?.html?.includes('<!doctype html'), 'artifact synthesized from the workspace html (' + (artifact?.html?.length ?? 0) + 'b)')
 
 const downloads = artifact?.downloads ?? []

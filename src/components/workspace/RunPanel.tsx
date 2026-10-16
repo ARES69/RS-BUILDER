@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { Check, CircleDashed, ExternalLink, FileCode2, Globe2, Terminal, Eye } from 'lucide-react'
 import { useI18n } from '@/i18n'
+import { withBaseHtml } from '@/lib/withBase'
 import type { RunState } from '@/lib/agent'
 import { cn } from '@/lib/cn'
 import { Mockup } from '@/components/ui/Mockups'
@@ -161,7 +162,7 @@ export function RunPanel({
                 )}
                 <iframe
                   title={l(state.artifact.title)}
-                  srcDoc={state.artifact.html}
+                  srcDoc={withBaseHtml(state.artifact.html, state.artifactMeta?.pageUrl)}
                   sandbox="allow-scripts"
                   className="min-h-[420px] w-full flex-1 bg-white"
                 />

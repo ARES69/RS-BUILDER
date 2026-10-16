@@ -71,9 +71,7 @@ export default function Workspace() {
   const [user, setUser] = useState<SessionUser | null>(null)
   const [authOpen, setAuthOpen] = useState(false)
   const [history, setHistory] = useState<HistoryEntry[]>([])
-  // after a finished run the composer continues THAT sandbox (context + files);
-  // the Plus button in the sidebar starts a clean one
-  const continueFrom = state.status === 'done' && state.jobId ? state.jobId : null
+  const [continueFrom, setContinueFrom] = useState<string | null>(null)
   const [gallery, setGallery] = useState<GalleryEntry[]>([])
 
   useEffect(() => {
@@ -149,6 +147,7 @@ export default function Workspace() {
       setMobileView('chat')
       setTab('plan')
       void start(prompt, { parentJobId: continueFrom })
+      setContinueFrom(null)
     },
     [start, continueFrom],
   )
@@ -448,12 +447,27 @@ export default function Workspace() {
 
           <div className="shrink-0 border-t border-line bg-bg/70 p-3 backdrop-blur sm:p-4">
             <div className="mx-auto max-w-3xl">
+              {state.jobId && state.status === 'done' && (
+                <button
+                  type="button"
+                  onClick={() => setContinueFrom((v) => (v === state.jobId ? null : state.jobId))}
+                  title={t('app.continueFromHint')}
+                  className={cn(
+                    'mb-2 inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-[11px] font-semibold transition-colors',
+                    continueFrom === state.jobId
+                      ? 'border-accent/60 bg-accent/10 text-accent'
+                      : 'border-line text-muted hover:border-accent/40 hover:text-accent',
+                  )}
+                >
+                  ⤷ {t('app.continueFrom')}
+                </button>
+              )}
               <Composer
                 onRun={run}
                 running={running}
                 onStop={stop}
                 size="md"
-                placeholderKey={continueFrom ? 'app.composerContinue' : 'app.composerPlaceholder'}
+                placeholderKey="app.composerPlaceholder"
                 initialPrompt=""
               />
             </div>

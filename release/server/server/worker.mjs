@@ -65,8 +65,6 @@ export async function processJob(jobId) {
   try {
     for await (const event of runEvents(job.prompt, job.locale, controller.signal, {
       seedFiles: job.seedFiles,
-      seedTurns: job.seedTurns,
-      seedBinaries: job.seedBinaries,
       checkpoint: job.checkpoint,
       onCheckpoint: (cpState) => {
         job.checkpoint = cpState
