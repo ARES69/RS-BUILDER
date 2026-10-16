@@ -14,7 +14,14 @@ function nextMove(messages) {
   const execFlags = messages.map((m) => m.role === 'user' && String(m.content).startsWith('Execute step'))
   const lastExecIdx = execFlags.lastIndexOf(true)
   const inStep = lastExecIdx >= 0 ? messages.slice(lastExecIdx + 1).filter((m) => m.role === 'tool').length : 0
-  const hasPlan = messages.some((m) => m.role === 'assistant' && (m.tool_calls ?? []).some((c) => c.function.name === 'submit_plan'))
+  // plan detection scoped to THIS run: the last plain user message is the
+  // current prompt (follow-ups inherit the parent dialogue above it)
+  let runStart = 0
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const c = String(messages[i].role === 'user' ? messages[i].content : '')
+    if (messages[i].role === 'user' && !c.startsWith('Execute step') && !c.startsWith('Continue:')) { runStart = i; break }
+  }
+  const hasPlan = messages.slice(runStart).some((m) => m.role === 'assistant' && (m.tool_calls ?? []).some((c) => c.function.name === 'submit_plan'))
   const tc = (name, args) => [{ id: 'call_' + ++callCount, type: 'function', function: { name, arguments: JSON.stringify(args) } }]
 
   if (!hasPlan) {

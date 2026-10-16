@@ -134,6 +134,15 @@
    SEO: og-image.png (1200x630, absolute), canonical, JSON-LD, robots, sitemap 19 url.
    + публичный viewer /view/<jobId> (share-петля: артефакт → CTA «Сделай такой же» →
    /app?prompt=…) и полоса RealRuns на лендинге из живой галереи.
+11. **S2-conversational (15-16.10.2026)**: песочница стала диалоговой, «как у Qwen»:
+   follow-up наследует turns родителя (сжатие: elide аргументы write/deliver tool_calls,
+   truncate tool-results, cap 28) + файлы + бинарники; композер после done продолжает
+   последний прогон; run_code получил bridge workspace.read/write/list; артефакт несёт
+   workspace.zip (весь sandbox). Прод-E2E: follow-up → v2 того же lineage на groq.
+   УРОК: groq free TPM 8k → наследуемые диалоги сжимать обязательно (413 иначе).
+   УРОК: серверный run_start приходит ПОСЛЕ клиентского job_meta — reducer не должен
+   ресетом стирать jobId (иначе follow-up в UI мёртв); проверять плейсхолдер/бейджи
+   по их собственным условиям, а не по тексту треда ('Готово' есть и в сообщениях).
    УРОК i18n: новые ключи вставлять В нужную секцию (view.* дважды уехали в features);
    плейwright-локаторы не видеть uppercase-трансформы через innerText — проверять ссылки/DOM.
    ПРОТОКОЛ: продукт больше НИКОГДА не притворяется — нет провайдеров = честная ошибка.
