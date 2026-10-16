@@ -48,6 +48,9 @@
   (08:00 Шанхай); OpenCode Zen анонимно закрыт политикой (403 FreeTierError,
   окт-2026), с ключом = платный каталог cheapest-first; баланс Zen = 0 (ждёт
   пополнения). Цепочка скипает ЛЮБУЮ ошибку звена; cooldown на дневные 429.
+- Vercel Lambda и песочница: `/bin/sh` и node (v24) в рантайме ЕСТЬ → `sandbox.mode=real`
+  в проде; **npm-бинарника НЕТ** (`capabilities` без `sandbox:npm`) — npm install честно
+  недоступен, модель получает понятный отказ, node/fs/net работают.
 - Деплой-карта: прод = проект `rs-builder` + git-интеграция (пуш в main = автодеплой,
   алиас `rs-builder-sigma.vercel.app`); стейдж = `rs-builder-app`
   (`rsb-abuse-test.vercel.app`, RSB_CRON_DISABLED=1, деплой CLI); сторы:
@@ -183,6 +186,11 @@
     деградация), api-контракт (files-сид, sanitize), qa-sandbox.mjs 19/19 в браузере.
     УРОКИ: пропущенная ')' в мок-скрипте = «empty artifact» (проверяй моки node --check);
     hasText-локаторы ловят подстроки; редиректы мини-шелла ищи вне кавычек.
+    ПРОД-ПРУФ (16.10, 13:15Z, `f93ff49`): sync-прогон на nemotron-3.5-super-vl:free —
+    run_start.sandbox=real (/bin/sh, node v24), `run_shell cat notes/human.md` прочитал
+    files-сид, приехавший из браузера, edit_file вшил маркер в футер, артефакт с маркером.
+    Queue деградировал в sync: status говорит jobStore=blob, но createJob падает —
+    Blob на ЗАПИСЬ всё ещё suspended (после 16.10 инцидента), деград-путь отработал штатно.
 10. **S2-blob-suspended (16.10.2026)**: оба Blob-стора ушли в limits-exceeded-suspended
    (hobby-пороги по операциям; flush 400ms + док на каждую попытку логина = чаттер).
    Прод деградирует честно: createJob падает → runs стримит синхронно (персистентность
@@ -207,6 +215,9 @@
 
 ## 6. Открытые нити (порядок по умолчанию)
 
+0. **Blob на запись**: сторы вернулись в status как `blob`, но createJob падает
+   (limits-exceeded-suspended после инцидента 16.10) → очередь/аккаунты/хостинг артефактов
+   офф до сброса порога или апгрейда/Upstash-ключа. Деград-путь в sync работает (пруф выше).
 1. **Биллинг v2**: Stripe-чекаут → ledger-topup записи (нужен Stripe secret key
    юзера), страничка планов с покупкой пакетов кредитов по тарифам прайсинга.
 2. **Auth-hardening v2**: OAuth GitHub как апгрейд входа (коды и лимиты уже есть).
