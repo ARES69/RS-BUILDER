@@ -5,7 +5,7 @@
  * which model catalogs are cached. No secrets are ever exposed.
  */
 import { engineInfo, runtimeStatus, VERSION } from '../../server/engine.mjs'
-import { parseRuntimeKeys } from '../../server/orchestrator.mjs'
+import { parseRuntimeKeys, sandboxStatus } from '../../server/orchestrator.mjs'
 import { jobStoreKind } from '../../server/jobstore.mjs'
 
 export default function handler(req, res) {
@@ -16,7 +16,10 @@ export default function handler(req, res) {
   }
   const runtime = parseRuntimeKeys(req.headers['x-rsb-keys'])
   const info = engineInfo(runtime)
+  // what the execution sandbox can really do on THIS runtime (probed, cached)
+  const sandbox = sandboxStatus()
   res.status(200).json({
+    sandbox,
     ok: true,
     name: 'rs-builder-agent-server',
     version: VERSION,
@@ -25,7 +28,12 @@ export default function handler(req, res) {
     ...runtimeStatus(),
     runtimeKeys: runtime ? Object.keys(runtime) : [],
     jobStore: jobStoreKind(),
-    capabilities: jobStoreKind() === 'blob' ? ['queue'] : [],
+    capabilities: [
+      ...(jobStoreKind() === 'blob' ? ['queue'] : []),
+      ...(sandbox.mode === 'real' ? ['sandbox:fs', 'sandbox:node'] : []),
+      ...(sandbox.mode === 'real' && sandbox.shell ? ['sandbox:shell'] : []),
+      ...(sandbox.mode === 'real' && sandbox.npm ? ['sandbox:npm'] : []),
+    ],
     serverTime: new Date().toISOString(),
     quotaNote: 'OpenRouter free tier: 50 req/day per account, resets 00:00 UTC; OpenCode Zen free tier is client-only since Oct 2026 (keyed = paid catalog).',
   })

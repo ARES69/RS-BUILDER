@@ -16,6 +16,9 @@ node scripts/test-api-functions.mjs
 echo "→ orchestrator test (mock LLM, real tool-calling loop)"
 node scripts/test-orchestrator.mjs
 
+echo "→ sandbox test (real fs/shell/node + client sandbox helpers)"
+node scripts/test-sandbox.mjs
+
 echo "→ packaging release/"
 rm -rf release
 mkdir -p release

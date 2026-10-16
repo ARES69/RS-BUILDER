@@ -67,13 +67,37 @@
 - searchWeb: lite/html duckduckgo отдают challenge-страницу с датацентр-IP (200, но
   без result-link) → фолбэк Wikipedia REST (`/w/rest.php/v1/search/page`) с UA вида
   `RSBuilderResearch/1.0 (url; email)` — браузерный UA wikipedia даёт 403.
+- Песочница v3 (server/sandbox.mjs): дети (shell/node) получают ТОЛЬКО scrubbed env
+  (PATH/HOME/TMPDIR/LANG/RSB_*) — провайдер-ключи и RSB_SESSION_SECRET модельный код
+  прочитать не может (тест-пруф). Граница = платформа + эфемерный /tmp, НЕ path-jail:
+  в full-режиме модель читает машину как любой shell-юзер, и это задокументировано.
+- Хост без /bin/sh → mini-shell (ls cat echo pwd mkdir rm touch cp mv head tail wc
+  grep node, цепи &&, редиректы > >>). Редирект ищется ВНЕ кавычек, иначе
+  `echo "<h1>hi</h1>" > f` рубится о '>' внутри аргумента.
+- run_code: сниппеты с import/export/топ-левел await уходят в .mjs (require прокинут
+  прологом), остальные — в vm-контекст ребёнка с completion value (`40+2` → `→ 42`).
+  Таймаут: 15s код / 20s шелл, модель может просить timeout_s до 45s.
+- Мок-скрипты (scripts/mock-llm-server.mjs) прогонять `node --check` ДО E2E: одна
+  пропущенная ')' в writeFileSync дала «empty artifact» и ложную подозрку на песочницу.
+- Sync/degrade-транспорт не даёт jobId → follow-up сеется с браузера
+  (workspaceSnapshot в Workspace.tsx); в queue-режиме — с parent job. Правки юзера из
+  вкладки Sandbox едут полем `files` (sanitizeSeedFiles: ≤12 файлов, ≤400KB, без ../).
+- playwright-локаторы: hasText — регистронезависимая ПОДСТРОКА (сайдбарная «Sign in to
+  keep run history» ловится на 'Run' и открывает модалку). Брать getByRole с exact или
+  /^Name/ и скоупить на тулбар; бейджи в табах ломают exact-имена.
 
 ## 3. Карта продукта (RS-BUILDER)
 
 - Лендинг/прайсинг/бренд/легал/блог (React+Vite, EN/RU, dark/light), воркспейс `/app`.
 - Бэкенд: `server/orchestrator.mjs` (LLM tool-calling цикл: submit_plan/think/
-  web_fetch/run_code(vm)/write_file/make_slides(pptx)/make_captions(srt)/
-  http_session/deliver_artifact), детерминированный фолбэк `server/core.mjs`.
+  web_fetch/run_shell/run_code(настоящий node-процесс)/write_file/edit_file/
+  list_files/read_file/make_slides(pptx)/make_captions(srt)/http_session/
+  wide_research/deliver_artifact) поверх `server/sandbox.mjs` — реальная проектная
+  папка в tmpdir: shell=/bin/sh (или mini-shell), node-дети с fs/net/require,
+  disk↔workspace sync, siteBinaries (картинки из песочницы хостятся рядом с
+  index.html), dispose по завершении. Режимы RSB_SANDBOX=full|fs|vm|off; честная
+  деградация до vm, если хост не может /tmp+процессы. Капсы — в /api/v1/status и в
+  run_start-ивенте (чип в UI).
 - Очередь: джобы в private Blob, воркер single-writer PUT + heartbeat + chaining,
   хвост `jobstream` с курсором, cancel, reaper; flat-роуты job/jobstream-внутри-
   job/auth/history/artifacts/status/worker/reap/runs/health/cron.
@@ -88,6 +112,9 @@
 
 - Код/док-грабли: `DEPLOY.md` (§6-9), README; тесты `scripts/test-*.mjs`;
   QA прода `scripts/qa-prod.mjs`; скрины `.shots/`.
+- Песочница: юнит `npm run test:sandbox` (сервер + клиентские хелперы через esbuild),
+  UI-E2E `npm run qa:sandbox` (mock-llm → agent-server → vite preview → playwright,
+  скрины .shots/sandbox-*.png), мок-LLM `scripts/mock-llm-server.mjs`.
 - Секреты прод-env: OPENAI_API_KEY (минт-ключ OR, limit $5), OPENAI_MODEL=auto-free,
   OPENCODE_API_KEY (zen, баланс 0), CRON_SECRET, RSB_SESSION_SECRET, VITE_AGENT_API_URL=/api.
 
@@ -143,6 +170,19 @@
    УРОК: серверный run_start приходит ПОСЛЕ клиентского job_meta — reducer не должен
    ресетом стирать jobId (иначе follow-up в UI мёртв); проверять плейсхолдер/бейджи
    по их собственным условиям, а не по тексту треда ('Готово' есть и в сообщениях).
+12. **S2-real-sandbox (16.10.2026)**: песочница стала настоящей («как у Qwen»):
+    server/sandbox.mjs — проектная папка на диске, run_shell (/bin/sh или mini-shell),
+    run_code = node-ребёнок (fs/net/require/import/await, completion value), disk↔
+    workspace sync (файлы, созданные кодом, становятся артефактом/zip/хостом), siteBinaries
+    (png из песочницы живут рядом с index.html на хосте), scrubbed env у детей, dispose,
+    честная деградация vm + капсы в /status и run_start. UI: вкладка Sandbox — редактор
+    с номерами строк, live preview с инлайном css/js/картинок относительно entry, НАСТОЯЩАЯ
+    консоль браузера через postMessage-мост, .zip проекта, «Continue with my edits» →
+    правки юзера едут `files`-сидом следующего прогона (работает и без jobId в sync-режиме).
+    Тесты: test-sandbox.mjs (57 проверок), секции G/H оркестратора (shell/node в тул-лупе,
+    деградация), api-контракт (files-сид, sanitize), qa-sandbox.mjs 19/19 в браузере.
+    УРОКИ: пропущенная ')' в мок-скрипте = «empty artifact» (проверяй моки node --check);
+    hasText-локаторы ловят подстроки; редиректы мини-шелла ищи вне кавычек.
 10. **S2-blob-suspended (16.10.2026)**: оба Blob-стора ушли в limits-exceeded-suspended
    (hobby-пороги по операциям; flush 400ms + док на каждую попытку логина = чаттер).
    Прод деградирует честно: createJob падает → runs стримит синхронно (персистентность
@@ -172,6 +212,9 @@
 2. **Auth-hardening v2**: OAuth GitHub как апгрейд входа (коды и лимиты уже есть).
 3. Zen-баланс: пополнение юзером → ключ оживёт сам (cooldown 15 мин). Groq уже в проде.
 4. Мелочи: кастомный домен rs-builder.app (упоминался в S1), OG/SEO-аудит.
+5. Песочница v4 (без новых ключей): терминал-вкладка (run_shell по запросу юзера),
+   npm-install с кэшем и честным таймаутом, превью multi-file через service-worker
+   вместо инлайна (сейчас инлайн покрывает css/js/картинки), diff-вид правок юзера.
 
 ## 7. Ритуалы
 

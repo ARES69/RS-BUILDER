@@ -14,6 +14,7 @@ import { createJob, getJob, jobStoreKind } from '../../server/jobstore.mjs'
 import { sessionFromRequest } from '../../server/auth.mjs'
 import { MIN_RUN_CREDITS, balance } from '../../server/credits.mjs'
 import { kickWorker, workerOrigin } from '../../server/worker.mjs'
+import { sanitizeSeedFiles } from '../../server/sandbox.mjs'
 import { reapStaleJobs } from '../../server/reaper.mjs'
 
 /** Queued runs need a durable store: Vercel Blob on Vercel, fs elsewhere. */
@@ -106,6 +107,9 @@ export default async function handler(req, res) {
         return
       }
     }
+    // the user edited files in the sandbox tab and wants the agent to
+    // continue from THEIR version — overrides (and extends) the parent seed
+    const overrideFiles = sanitizeSeedFiles(payload.files)
     let lineageRoot = null
     let seedFiles = null
     let seedTurns = null
@@ -127,6 +131,7 @@ export default async function handler(req, res) {
         if (total > 400_000) seedFiles = Object.fromEntries(Object.entries(seedFiles).slice(0, 8))
       }
     }
+    if (overrideFiles) seedFiles = { ...(seedFiles ?? {}), ...overrideFiles }
     let job = null
     try {
       job = await createJob({
@@ -184,7 +189,10 @@ export default async function handler(req, res) {
   res.on('error', () => abort.abort())
 
   try {
-    const runtime = parseRuntimeKeys(req.headers['x-rsb-keys'])
+    const runtime = {
+      ...(parseRuntimeKeys(req.headers['x-rsb-keys']) ?? {}),
+      seedFiles: sanitizeSeedFiles(payload.files) ?? undefined,
+    }
     for await (const event of runEvents(payload.prompt, payload.locale, abort.signal, runtime)) {
       if (abort.signal.aborted) break
       res.write('data: ' + JSON.stringify(event) + '\n\n')

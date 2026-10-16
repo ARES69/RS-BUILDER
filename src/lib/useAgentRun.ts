@@ -8,7 +8,13 @@ function reduce(state: RunState, event: AgentEvent): RunState {
     case 'run_start':
       // job_meta (queued transport) arrives BEFORE the server run_start and
       // must survive it: jobId drives follow-up continuation
-      return { ...initialRunState, status: 'running', model: event.model ?? null, jobId: state.jobId }
+      return {
+        ...initialRunState,
+        status: 'running',
+        model: event.model ?? null,
+        jobId: state.jobId,
+        sandbox: event.sandbox ?? state.sandbox,
+      }
     case 'model':
       return { ...state, model: event.model }
     case 'job_meta':
@@ -38,7 +44,14 @@ function reduce(state: RunState, event: AgentEvent): RunState {
     case 'console':
       return { ...state, logs: [...state.logs, event.line] }
     case 'file':
-      return { ...state, files: [...state.files, event.file] }
+      // upsert by path: a real sandbox re-reports files that code/shell changed,
+      // and edit_file re-emits the patched version of an existing file
+      return {
+        ...state,
+        files: state.files.some((f) => f.path === event.file.path)
+          ? state.files.map((f) => (f.path === event.file.path ? event.file : f))
+          : [...state.files, event.file],
+      }
     case 'browse':
       return { ...state, pages: [...state.pages, event.page] }
     case 'progress':
@@ -79,7 +92,7 @@ export function useAgentRun() {
   }, [])
 
   const start = useCallback(
-    async (prompt: string, opts?: { parentJobId?: string | null }) => {
+    async (prompt: string, opts?: { parentJobId?: string | null; files?: Record<string, string> | null }) => {
       controller.current?.abort()
       const next = new AbortController()
       controller.current = next

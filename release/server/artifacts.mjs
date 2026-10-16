@@ -84,6 +84,13 @@ export async function publishArtifact(job, artifact) {
     files.push({ name: 'site/' + f.path, url, size: String(f.content).length })
     if (!siteUrl && /\.html?$/.test(f.path)) siteUrl = url
   }
+  // binary assets generated inside the sandbox (images, fonts) → same tree
+  for (const b of artifact?.siteBinaries ?? []) {
+    if (!b?.path || !b?.base64) continue
+    const buf = Buffer.from(b.base64, 'base64')
+    const url = await publishOne(base + '/site/' + b.path, buf, typeOf(b.path))
+    files.push({ name: 'site/' + b.path, url, size: buf.length })
+  }
   if (siteUrl) pageUrl = siteUrl
   for (const dl of artifact?.downloads ?? []) {
     if (!dl?.name || !dl?.base64) continue

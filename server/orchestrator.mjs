@@ -8,8 +8,9 @@
  *   submit_plan      → plan
  *   think            → thought
  *   web_fetch        → tool + browse        (real HTTP fetch, SSRF-guarded)
- *   run_code         → tool + console      (real execution in a node:vm sandbox)
- *   write_file       → tool + file         (kept in a per-run in-memory FS)
+ *   run_code         → tool + console      (REAL node child process, cwd = project)
+ *   run_shell        → tool + console      (REAL /bin/sh, or a built-in mini-shell)
+ *   write_file       → tool + file         (REAL files on disk + the run workspace)
  *   read_file        → tool
  *   step_done        → progress + step_done
  *   deliver_artifact → artifact
@@ -22,8 +23,8 @@
  * Guardrails: max steps, max tool calls per step, per-call timeout, total
  * deadline, code-exec timeout, fetch size cap, private-network blocklist.
  */
-import vm from 'node:vm'
 import { buildPptx, buildSrt, httpSession, searchWeb, zipStore } from './tools.mjs'
+import { createSandbox, capabilities as sandboxCapabilities, executeInVm } from './sandbox.mjs'
 
 const L = (en, ru) => ({ en, ru })
 const both = (text) => ({ en: text, ru: text })
@@ -36,7 +37,10 @@ const MAX_STEPS = 6
 const MAX_TOOL_CALLS_PER_STEP = 8
 const MAX_TOTAL_TOOL_CALLS = 28
 const LLM_TIMEOUT_MS = 45000
-const CODE_TIMEOUT_MS = 2500
+const CODE_TIMEOUT_MS = 2500 // legacy in-process vm fallback
+const REAL_CODE_TIMEOUT_MS = 15_000 // real node child process
+const REAL_SHELL_TIMEOUT_MS = 20_000 // real /bin/sh (or mini-shell)
+const MAX_TOOL_TIMEOUT_MS = 45_000 // hard cap the model can request
 const FETCH_TIMEOUT_MS = 12000
 const FETCH_MAX_CHARS = 6000
 
@@ -78,8 +82,31 @@ const TOOLS = [
   },
   {
     name: 'run_code',
-    description: 'Execute JavaScript in a sandboxed VM (no fs/net/process). stdout and the completion value are returned.',
-    schema: { type: 'object', properties: { code: { type: 'string' }, note: { type: 'string' } }, required: ['code'] },
+    description:
+      'Execute JavaScript in a REAL Node.js process inside your project directory. Full node:fs, fetch, require/import and installed npm packages are available; stdout, stderr and the completion value are returned. Code runs where your files live — read/write them with node:fs.',
+    schema: {
+      type: 'object',
+      properties: {
+        code: { type: 'string' },
+        note: { type: 'string' },
+        timeout_s: { type: 'number', description: 'Optional wall-clock budget in seconds (default 15, max 45).' },
+      },
+      required: ['code'],
+    },
+  },
+  {
+    name: 'run_shell',
+    description:
+      'Run a shell command in your project directory (cwd = project root, real filesystem, node on PATH, npm when the host provides it). Use it to inspect the tree, run builds/scripts, transform files, or install packages. Output is captured; long-running servers are killed at the timeout.',
+    schema: {
+      type: 'object',
+      properties: {
+        command: { type: 'string', description: 'One command line, e.g. "ls -la", "node build.js", "npm install --no-audit"' },
+        note: { type: 'string' },
+        timeout_s: { type: 'number', description: 'Optional wall-clock budget in seconds (default 20, max 45).' },
+      },
+      required: ['command'],
+    },
   },
   {
     name: 'edit_file',
@@ -757,37 +784,25 @@ export async function executeWebFetch(args) {
   }
 }
 
+/**
+ * Legacy in-process execution: only used when the host cannot create a real
+ * sandbox (no writable tmp / no child processes). The real path is
+ * sandbox.runNode() — a Node child process in the project directory.
+ */
 export function executeCode(args, workspaceFiles) {
-  const logs = []
-  const sandbox = {
-    console: {
-      log: (...a) => logs.push(a.map((x) => (typeof x === 'object' ? JSON.stringify(x) : String(x))).join(' ')),
-      warn: (...a) => logs.push('warn: ' + a.join(' ')),
-      error: (...a) => logs.push('error: ' + a.join(' ')),
-    },
-    Math,
-    JSON,
-    Date,
-    Intl,
-    // sandboxed bridge onto the run workspace: the model scripts against its
-    // own files the way an agent scripts against a real filesystem
-    workspace: {
-      list: () => (workspaceFiles ? [...workspaceFiles.keys()] : []),
-      read: (path) => (workspaceFiles ? workspaceFiles.get(String(path)) ?? null : null),
-      write: (path, content) => {
-        if (!workspaceFiles) return false
-        workspaceFiles.set(String(path), String(content))
-        return true
-      },
-    },
-  }
-  try {
-    const context = vm.createContext(sandbox)
-    const result = vm.runInContext(args.code, context, { timeout: CODE_TIMEOUT_MS, displayErrors: true })
-    if (result !== undefined) logs.push('→ ' + (typeof result === 'object' ? JSON.stringify(result) : String(result)))
-    return { ok: true, text: logs.join('\n') || '(no output)' }
-  } catch (error) {
-    return { ok: false, text: (logs.join('\n') + '\n' + error.message).trim() }
+  return executeInVm(String(args?.code ?? ''), workspaceFiles)
+}
+
+/** What the sandbox can actually do right now — reported to the UI honestly. */
+export function sandboxStatus(sandbox) {
+  const caps = sandboxCapabilities()
+  return {
+    mode: sandbox ? sandbox.mode : caps.real ? 'real' : 'vm',
+    shell: Boolean(caps.shell),
+    shellBinary: caps.shell ?? (caps.real ? 'mini-shell' : null),
+    node: caps.node,
+    npm: caps.npm,
+    project: sandbox?.root ? sandbox.root.split('/').pop() : null,
   }
 }
 
@@ -799,7 +814,21 @@ const MIME = {
   csv: 'text/csv',
   json: 'application/json',
   html: 'text/html',
+  css: 'text/css',
+  js: 'text/javascript',
+  png: 'image/png',
+  jpg: 'image/jpeg',
+  jpeg: 'image/jpeg',
+  webp: 'image/webp',
+  gif: 'image/gif',
+  ico: 'image/x-icon',
+  pdf: 'application/pdf',
+  woff2: 'font/woff2',
+  zip: 'application/zip',
 }
+
+/** Assets a hosted page can reference relatively (images/fonts), as base64. */
+const SITE_ASSET_EXT = /\.(png|jpe?g|webp|gif|ico|woff2?|ttf|mp4|webm|pdf)$/i
 
 function collectDownloads(files, binaries) {
   const downloads = []
@@ -829,6 +858,8 @@ function systemPrompt(locale) {
     '1. First call submit_plan with 3-6 concrete steps and a short intro for the user.',
     '2. Then execute the steps in order. Before notable actions call think with a one-sentence note.',
     '3. Use run_code for computations, search_web + web_fetch for external facts, wide_research for multi-entity landscapes, make_slides for real PPTX decks, make_captions for SRT, http_session for form/portal flows, write_file/read_file for workspace files.',
+    '3b. You have a REAL sandbox: run_code executes in a Node.js process with cwd = your project directory (node:fs, fetch, npm packages all work) and run_shell runs shell commands there. Prefer them whenever a task is easier with code than by hand-writing files: scaffolding trees, transforming data, generating SVG/PNG, minifying, validating your own HTML/JS, computing real numbers. If a command fails, read the error and adapt — never invent output.',
+    '3c. Sandbox limits: each run_code/run_shell call is killed after its timeout (default 15-20s, request timeout_s up to 45), the project directory is EPHEMERAL (it disappears when the run ends — anything worth keeping must be written as a workspace file so it is hosted and downloadable), and no long-running servers (a dev server will be killed; deliver static files instead).',
     '4. After finishing each step call step_done with a one-line summary.',
     '5. Write documents with write_file in chunks smaller than 4KB, then call deliver_artifact with {title, from_file} pointing at the final .html (do not repeat the html inline).',
     '5b. Websites may be MULTI-FILE: index.html + styles.css + app.js with relative links — the whole tree gets hosted permanently. Fix files with edit_file (exact first-occurrence patch), never rewrite whole files for small changes. list_files before editing.',
@@ -842,12 +873,71 @@ function systemPrompt(locale) {
 /* The orchestrated run                                                */
 /* ------------------------------------------------------------------ */
 
+/**
+ * Public entry point. It owns the sandbox lifecycle: one real project
+ * directory on disk per run, seeded with the parent workspace on follow-ups
+ * and removed when the run ends. The generator body lives in the inner
+ * function so the try/finally cannot be skipped by a throw or an early return.
+ */
 export async function* runOrchestrated(prompt, locale, signal, runtime) {
+  const seedFiles = new Map()
+  if (runtime?.seedFiles && typeof runtime.seedFiles === 'object') {
+    for (const [path, content] of Object.entries(runtime.seedFiles)) {
+      if (typeof content === 'string' && content.length < 200_000) seedFiles.set(path, content)
+    }
+  }
+  const seedBinaries = new Map()
+  if (runtime?.seedBinaries && typeof runtime.seedBinaries === 'object') {
+    for (const [name, b64] of Object.entries(runtime.seedBinaries)) {
+      if (typeof b64 === 'string') seedBinaries.set(name, Buffer.from(b64, 'base64'))
+    }
+  }
+  const sandbox = await createSandbox('run_' + Date.now().toString(36), { seedFiles, seedBinaries })
+  try {
+    yield* runOrchestratedInner(prompt, locale, signal, runtime, sandbox)
+  } finally {
+    sandbox.dispose()
+  }
+}
+
+async function* runOrchestratedInner(prompt, locale, signal, runtime, sandbox) {
   const entries = await providerEntries(signal, runtime)
   if (!entries.length) throw new Error('no LLM provider configured')
 
   const files = new Map()
   const binaries = new Map()
+  // single mutation path: run workspace (artifact/zip/checkpoints) AND the
+  // real project directory (what run_code / run_shell / npm actually see)
+  const putFile = (path, content) => {
+    files.set(path, content)
+    if (sandbox.real) sandbox.write(path, content)
+    return content
+  }
+  const putBinary = (name, buffer) => {
+    binaries.set(name, buffer)
+    if (sandbox.real) sandbox.writeBinary(name, buffer)
+    return buffer
+  }
+  const kindOf = (path) =>
+    path.endsWith('.json') ? 'json' : path.endsWith('.html') ? 'html' : path.endsWith('.md') ? 'md' : path.endsWith('.csv') ? 'csv' : 'code'
+  const fileEvent = (stepId, path, content) => ({
+    type: 'file',
+    stepId,
+    file: { path, kind: kindOf(path), content: String(content).slice(0, 4000), bytes: Buffer.byteLength(String(content)) + ' B' },
+  })
+  const clampTimeout = (requested, fallback) => {
+    const n = Number(requested)
+    if (!Number.isFinite(n) || n <= 0) return fallback
+    return Math.min(Math.round(n * 1000), MAX_TOOL_TIMEOUT_MS)
+  }
+  /** Files created by code/shell become first-class workspace citizens. */
+  const syncFromSandbox = function* (stepId, before) {
+    if (!sandbox.real) return []
+    sandbox.syncInto(files, binaries)
+    const created = [...files.keys()].filter((path) => !before.has(path))
+    for (const path of created) yield fileEvent(stepId, path, files.get(path))
+    return created
+  }
   // continued runs start with the parent's workspace + artifact html
   if (runtime?.seedFiles && typeof runtime.seedFiles === 'object') {
     for (const [path, content] of Object.entries(runtime.seedFiles)) {
@@ -882,14 +972,17 @@ export async function* runOrchestrated(prompt, locale, signal, runtime) {
   if (cp) {
     turns.length = 0
     for (const m of cp.turns || []) turns.push(m)
-    for (const [p2, c2] of cp.files || []) files.set(p2, c2)
-    for (const [n2, b64] of cp.binaries || []) binaries.set(n2, Buffer.from(b64, 'base64'))
+    for (const [p2, c2] of cp.files || []) putFile(p2, c2)
+    for (const [n2, b64] of cp.binaries || []) putBinary(n2, Buffer.from(b64, 'base64'))
     plan = cp.plan ?? null
     intro = cp.intro ?? null
     startStep = cp.stepIndex ?? 0
     totalCalls = cp.totalCalls ?? 0
     credits = cp.credits ?? 0
     usedModel = cp.usedModel ?? null
+    // a resumed invocation gets a FRESH sandbox: put the checkpointed state
+    // back on disk so shell/node see exactly what the previous one had
+    sandbox.seedFrom(files, binaries)
   }
   const checkpoint = (stepIndex, phase) => {
     if (typeof runtime?.onCheckpoint !== 'function') return
@@ -926,7 +1019,19 @@ export async function* runOrchestrated(prompt, locale, signal, runtime) {
     }
   }
   if (!cp) {
-    yield { type: 'run_start', runId, model: entries.slice(0, 3).map((e) => e.id + '/' + e.model).join(' → ') + (entries.length > 3 ? ' → …(' + entries.length + ' total)' : '') }
+    yield {
+      type: 'run_start',
+      runId,
+      model: entries.slice(0, 3).map((e) => e.id + '/' + e.model).join(' → ') + (entries.length > 3 ? ' → …(' + entries.length + ' total)' : ''),
+      sandbox: sandboxStatus(sandbox),
+    }
+    yield {
+      type: 'console',
+      stepId: 'sandbox',
+      line:
+        'sandbox · ' + sandbox.mode +
+        (sandbox.real ? ' · node ' + (sandbox.caps.node ?? '?') + (sandbox.caps.shell ? ' · ' + sandbox.caps.shell : ' · mini-shell') + (sandbox.caps.npm ? ' · npm' : '') : ' · in-process vm (no real fs on this host)'),
+    }
     yield { type: 'message', role: 'user', text: both(String(prompt)) }
   }
   if (cp && plan) {
@@ -1025,15 +1130,54 @@ export async function* runOrchestrated(prompt, locale, signal, runtime) {
             break
           }
           case 'run_code': {
-            yield { type: 'tool', stepId: step.id, tool: { name: 'shell', detail: both(String(c.args.note ?? 'running sandboxed code').slice(0, 90)) } }
-            const ran = executeCode(c.args, files)
+            yield { type: 'tool', stepId: step.id, tool: { name: 'shell', detail: both(String(c.args.note ?? 'node in the project sandbox').slice(0, 90)) } }
+            const before = new Set(files.keys())
+            const ran = await sandbox.runNode(String(c.args.code ?? ''), {
+              timeoutMs: clampTimeout(c.args.timeout_s, REAL_CODE_TIMEOUT_MS),
+              workspaceFiles: files,
+            })
             for (const line of ran.text.split('\n').slice(0, 24)) yield { type: 'console', stepId: step.id, line }
-            results.push({ id: c.id, text: (ran.ok ? 'stdout:\n' : 'FAILED:\n') + ran.text.slice(0, 3000) })
+            const created = yield* syncFromSandbox(step.id, before)
+            results.push({
+              id: c.id,
+              text:
+                (ran.ok ? 'stdout:\n' : 'FAILED:\n') + ran.text.slice(0, 3000) +
+                (created.length ? '\n\n[workspace gained: ' + created.join(', ') + ']' : '') +
+                (ran.mode ? '\n[executed via ' + ran.mode + ']' : ''),
+            })
+            break
+          }
+          case 'run_shell': {
+            const command = String(c.args.command ?? '').trim()
+            if (!command) {
+              results.push({ id: c.id, text: 'FAILED: empty command' })
+              break
+            }
+            yield { type: 'tool', stepId: step.id, tool: { name: 'shell', detail: both(('$ ' + command).slice(0, 90)) } }
+            const before = new Set(files.keys())
+            const ran = await sandbox.shell(command, { timeoutMs: clampTimeout(c.args.timeout_s, REAL_SHELL_TIMEOUT_MS) })
+            for (const line of ran.text.split('\n').slice(0, 24)) yield { type: 'console', stepId: step.id, line }
+            const created = yield* syncFromSandbox(step.id, before)
+            results.push({
+              id: c.id,
+              text:
+                (ran.ok ? 'exit 0' + (ran.mode ? ' [' + ran.mode + ']' : '') + '\n' : 'FAILED [' + (ran.mode ?? 'shell') + ']\n') +
+                ran.text.slice(0, 3000) +
+                (created.length ? '\n\n[workspace gained: ' + created.join(', ') + ']' : ''),
+            })
             break
           }
           case 'write_file': {
             const path = String(c.args.path ?? 'output/file.txt')
-            files.set(path, String(c.args.content ?? ''))
+            const content = String(c.args.content ?? '')
+            if (sandbox.real) {
+              const wrote = sandbox.write(path, content)
+              if (!wrote.ok) {
+                results.push({ id: c.id, text: 'FAILED: ' + wrote.error })
+                break
+              }
+            }
+            files.set(path, content)
             yield { type: 'tool', stepId: step.id, tool: { name: 'editor', detail: both('Writing ' + path) } }
             yield {
               type: 'file',
@@ -1047,7 +1191,12 @@ export async function* runOrchestrated(prompt, locale, signal, runtime) {
             const path = String(c.args.path ?? '')
             const oldText = String(c.args.old_text ?? '')
             const newText = String(c.args.new_text ?? '')
-            const current = files.get(path)
+            let current = files.get(path)
+            if (current === undefined && sandbox.real) {
+              // files created by run_code/run_shell live on disk first
+              const fromDisk = sandbox.read(path)
+              if (fromDisk.ok) { current = fromDisk.content; files.set(path, current) }
+            }
             if (current === undefined) {
               results.push({ id: c.id, text: 'FAILED: no such file: ' + path })
               break
@@ -1056,19 +1205,33 @@ export async function* runOrchestrated(prompt, locale, signal, runtime) {
               results.push({ id: c.id, text: 'FAILED: old_text not found in ' + path + ' (use list_files/read_file to check the exact content)' })
               break
             }
-            files.set(path, current.replace(oldText, newText))
+            putFile(path, current.replace(oldText, newText))
             yield { type: 'tool', stepId: step.id, tool: { name: 'editor', detail: both('Patching ' + path) } }
+            yield fileEvent(step.id, path, files.get(path))
             results.push({ id: c.id, text: 'patched ' + path + ' (' + oldText.length + ' → ' + newText.length + ' chars)' })
             break
           }
           case 'list_files': {
-            const listing = [...files.entries()].map(([p, c]) => p + ' (' + String(c).length + ' B)')
-            results.push({ id: c.id, text: listing.length ? listing.join('\n') : 'workspace is empty' })
+            if (sandbox.real) sandbox.syncInto(files, binaries)
+            const listing = sandbox.real
+              ? sandbox.list().map((f) => f.path + ' (' + f.size + ' B)')
+              : [...files.entries()].map(([p2, c2]) => p2 + ' (' + Buffer.byteLength(String(c2)) + ' B)')
+            const binariesList = [...binaries.keys()].filter((n) => !listing.some((l) => l.startsWith(n + ' ')))
+            results.push({
+              id: c.id,
+              text: listing.length || binariesList.length
+                ? 'project root: ' + (sandbox.real ? sandbox.root : '(in-memory workspace)') + '\n' +
+                  listing.concat(binariesList.map((n) => n + ' (binary)')).join('\n')
+                : 'workspace is empty',
+            })
             break
           }
           case 'read_file': {
-            const content = files.get(String(c.args.path))
-            results.push({ id: c.id, text: content === undefined ? 'FAILED: no such file' : content.slice(0, 4000) })
+            const path = String(c.args.path ?? '')
+            const fromDisk = sandbox.real ? sandbox.read(path) : null
+            const content = fromDisk?.ok ? fromDisk.content : files.get(path)
+            if (fromDisk?.ok) files.set(path, fromDisk.content)
+            results.push({ id: c.id, text: content === undefined ? 'FAILED: no such file: ' + path : String(content).slice(0, 4000) })
             break
           }
           case 'search_web': {
@@ -1108,7 +1271,7 @@ export async function* runOrchestrated(prompt, locale, signal, runtime) {
               }
               report += '## ' + part.slice + '\n' + part.sources.map((src) => '- [' + src.title + '](' + src.url + ')\n' + (src.text ? src.text.slice(0, 900) + '\n' : '')).join('') + '\n'
             }
-            files.set('research/wide-research.md', report)
+            putFile('research/wide-research.md', report)
             yield { type: 'file', stepId: step.id, file: { path: 'research/wide-research.md', kind: 'md', content: report.slice(0, 4000), bytes: report.length + ' B' } }
             results.push({ id: c.id, text: 'merged report (research/wide-research.md):\n' + report.slice(0, 5000) })
             break
@@ -1117,13 +1280,13 @@ export async function* runOrchestrated(prompt, locale, signal, runtime) {
             const slides = (c.args.slides ?? []).slice(0, 20)
             const bytes = buildPptx(String(c.args.title ?? 'Deck'), slides)
             const name = String(c.args.file_name ?? 'deck.pptx')
-            binaries.set(name, bytes)
+            putBinary(name, bytes)
             yield { type: 'tool', stepId: step.id, tool: { name: 'render', detail: both('Building ' + name + ' (' + slides.length + ' slides)') } }
             yield { type: 'console', stepId: step.id, line: 'pptx: ' + bytes.length + ' bytes · ' + slides.length + ' slides · OOXML valid' }
             const deckHtml = '<!doctype html><html><head><meta charset="utf-8"><style>body{margin:0;background:#0b0b11;color:#f4f4f1;font:16px/1.5 system-ui}section{min-height:100vh;display:flex;flex-direction:column;justify-content:center;gap:14px;padding:8vh 10vw;border-bottom:1px solid #ffffff1f}h2{font-size:clamp(26px,4vw,44px);margin:0;letter-spacing:-.03em}li{margin:6px 0;color:#c9c9d2}.k{color:#c8f751;font:600 12px/1 system-ui;letter-spacing:.16em;text-transform:uppercase}</style></head><body>' +
               slides.map((sl, i) => '<section><span class="k">' + (i + 1) + ' / ' + slides.length + '</span><h2>' + String(sl.title ?? '').replace(/</g, '&lt;') + '</h2><ul>' + (sl.bullets ?? []).map((b) => '<li>' + String(b).replace(/</g, '&lt;') + '</li>').join('') + '</ul></section>').join('') +
               '</body></html>'
-            files.set('deck.html', deckHtml)
+            putFile('deck.html', deckHtml)
             results.push({ id: c.id, text: 'wrote ' + name + ' (' + bytes.length + ' bytes, attached to the artifact downloads) and deck.html preview' })
             break
           }
@@ -1140,7 +1303,7 @@ export async function* runOrchestrated(prompt, locale, signal, runtime) {
           case 'make_captions': {
             const srt = buildSrt(c.args.lines)
             const name = String(c.args.file_name ?? 'captions.srt')
-            files.set(name, srt)
+            putFile(name, srt)
             yield { type: 'tool', stepId: step.id, tool: { name: 'render', detail: both('Writing ' + name) } }
             yield { type: 'file', stepId: step.id, file: { path: name, kind: 'md', content: srt.slice(0, 2000), bytes: srt.length + ' B' } }
             results.push({ id: c.id, text: 'wrote ' + name + ' (' + (c.args.lines ?? []).length + ' cues)' })
@@ -1152,6 +1315,8 @@ export async function* runOrchestrated(prompt, locale, signal, runtime) {
             done = true
             break
           case 'deliver_artifact':
+            // the final state may have been produced by code, not by write_file
+            if (sandbox.real) sandbox.syncInto(files, binaries)
             artifact = normalizeArtifact(c.args, files)
             results.push({ id: c.id, text: 'artifact accepted' })
             done = true
@@ -1178,6 +1343,12 @@ export async function* runOrchestrated(prompt, locale, signal, runtime) {
     .filter(([p, c]) => /\.(html|css|js|mjs|json|svg|md|txt)$/.test(p) && typeof c === 'string' && c.length < 400_000)
     .slice(0, 40)
     .map(([path, content]) => ({ path, content }))
+  // binaries generated INSIDE the sandbox (a logo drawn by a node script, a
+  // rendered png) must sit next to index.html on the host, not only in downloads
+  const siteBinaries = [...binaries.entries()]
+    .filter(([name]) => SITE_ASSET_EXT.test(name))
+    .slice(0, 6)
+    .map(([path, buffer]) => ({ path, base64: Buffer.from(buffer).toString('base64') }))
   if (!artifact) {
     const htmlFile = [...files.entries()].find(([path]) => path.endsWith('.html'))
     artifact = htmlFile
@@ -1185,6 +1356,7 @@ export async function* runOrchestrated(prompt, locale, signal, runtime) {
       : fallbackBrief(prompt, files, locale)
   }
   if (siteFiles.length) artifact.siteFiles = siteFiles
+  if (siteBinaries.length) artifact.siteBinaries = siteBinaries
   artifact.downloads = collectDownloads(files, binaries)
   // the whole sandbox as one archive: "give me everything you made"
   if (files.size > 1) {

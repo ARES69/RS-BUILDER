@@ -1,27 +1,34 @@
 import { useState } from 'react'
-import { Check, CircleDashed, ExternalLink, FileCode2, Globe2, Terminal, Eye } from 'lucide-react'
+import { Check, CircleDashed, ExternalLink, FileCode2, Globe2, Terminal, TerminalSquare, Eye } from 'lucide-react'
+import { Sandbox } from '@/components/workspace/Sandbox'
 import { useI18n } from '@/i18n'
 import { withBaseHtml } from '@/lib/withBase'
 import type { RunState } from '@/lib/agent'
 import { cn } from '@/lib/cn'
 import { Mockup } from '@/components/ui/Mockups'
 
-type Tab = 'plan' | 'preview' | 'browser' | 'files' | 'console'
+export type RunTab = 'plan' | 'sandbox' | 'preview' | 'browser' | 'files' | 'console'
 
 export function RunPanel({
   state,
   activeTab,
   onTabChange,
+  onArmFiles,
+  armedCount,
 }: {
   state: RunState
-  activeTab: Tab
-  onTabChange: (tab: Tab) => void
+  activeTab: RunTab
+  onTabChange: (tab: RunTab) => void
+  /** Sandbox edits waiting to be sent with the next prompt. */
+  onArmFiles: (files: Record<string, string>) => void
+  armedCount: number
 }) {
   const { t, l } = useI18n()
   const [selectedFile, setSelectedFile] = useState(0)
 
-  const tabs: { id: Tab; label: string; icon: typeof Check; badge?: number }[] = [
+  const tabs: { id: RunTab; label: string; icon: typeof Check; badge?: number }[] = [
     { id: 'plan', label: t('app.plan'), icon: Check },
+    { id: 'sandbox', label: t('app.sandbox'), icon: TerminalSquare, badge: state.files.length || undefined },
     { id: 'preview', label: t('app.preview'), icon: Eye, badge: state.artifact ? 1 : 0 },
     { id: 'browser', label: t('app.browser'), icon: Globe2, badge: state.pages.length },
     { id: 'files', label: t('app.files'), icon: FileCode2, badge: state.files.length },
@@ -54,6 +61,13 @@ export function RunPanel({
       </div>
 
       <div className="min-h-0 flex-1 overflow-y-auto">
+        {/* SANDBOX: real editor + live preview + browser console */}
+        {activeTab === 'sandbox' ? (
+          <div className="flex h-full min-h-[420px] flex-col overflow-hidden">
+            <Sandbox state={state} onArmFiles={onArmFiles} armedCount={armedCount} />
+          </div>
+        ) : null}
+
         {/* PLAN */}
         {activeTab === 'plan' ? (
           <div className="p-4">

@@ -27,6 +27,14 @@ export type BackendStatus = {
   cooldowns: Record<string, number>
   catalogs: Record<string, string[] | null>
   runtimeKeys: string[]
+  sandbox?: {
+    mode: 'real' | 'vm'
+    shell: boolean
+    shellBinary: string | null
+    node: string | null
+    npm: boolean
+    project: string | null
+  } | null
   serverTime: string
   quotaNote?: string
   jobStore?: string
@@ -120,12 +128,20 @@ async function* sseEvents(response: Response): AsyncGenerator<AgentEvent> {
  * Closing the tab, losing the network or a frozen worker do not kill the run;
  * the tail re-attaches with its cursor until a terminal status arrives.
  */
-async function* runQueued(prompt: string, locale: Locale, signal?: AbortSignal, opts?: { parentJobId?: string | null }): AsyncGenerator<AgentEvent> {
+export type RunOptions = { parentJobId?: string | null; files?: Record<string, string> | null }
+
+async function* runQueued(prompt: string, locale: Locale, signal?: AbortSignal, opts?: RunOptions): AsyncGenerator<AgentEvent> {
   const base = (AGENT_API_URL ?? '').replace(/\/$/, '')
   const created = await fetch(base + '/v1/runs', {
     method: 'POST',
     headers: { 'content-type': 'application/json', ...runtimeHeaders() },
-    body: JSON.stringify({ prompt, locale, mode: 'queue', parentJobId: opts?.parentJobId || undefined }),
+    body: JSON.stringify({
+      prompt,
+      locale,
+      mode: 'queue',
+      parentJobId: opts?.parentJobId || undefined,
+      files: opts?.files && Object.keys(opts.files).length ? opts.files : undefined,
+    }),
     signal,
   })
   if (created.status === 402) {
@@ -234,26 +250,31 @@ export async function* runRemote(
   prompt: string,
   locale: Locale,
   signal?: AbortSignal,
-  opts?: { parentJobId?: string | null },
+  opts?: RunOptions,
 ): AsyncGenerator<AgentEvent> {
   const caps = await backendCaps()
   if (caps && (caps.capabilities ?? []).includes('queue')) {
     yield* runQueued(prompt, locale, signal, opts)
     return
   }
-  yield* runRemoteSync(prompt, locale, signal)
+  yield* runRemoteSync(prompt, locale, signal, opts)
 }
 
 async function* runRemoteSync(
   prompt: string,
   locale: Locale,
   signal?: AbortSignal,
+  opts?: RunOptions,
 ): AsyncGenerator<AgentEvent> {
   const base = (AGENT_API_URL ?? '').replace(/\/$/, '')
   const response = await fetch(base + '/v1/runs', {
     method: 'POST',
     headers: { 'content-type': 'application/json', accept: 'text/event-stream', ...runtimeHeaders() },
-    body: JSON.stringify({ prompt, locale }),
+    body: JSON.stringify({
+      prompt,
+      locale,
+      files: opts?.files && Object.keys(opts.files).length ? opts.files : undefined,
+    }),
     signal,
   })
 

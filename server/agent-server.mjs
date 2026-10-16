@@ -6,7 +6,8 @@
  */
 import { createServer } from 'node:http'
 import { runEvents, VERSION, engineInfo, runtimeStatus } from './engine.mjs'
-import { parseRuntimeKeys } from './orchestrator.mjs'
+import { parseRuntimeKeys, sandboxStatus } from './orchestrator.mjs'
+import { sanitizeSeedFiles } from './sandbox.mjs'
 
 const PORT = Number(process.env.PORT ?? 8787)
 
@@ -36,6 +37,15 @@ const server = createServer((req, res) => {
       ok: true, name: 'rs-builder-agent-server', version: VERSION, runtime: 'node-standalone',
       ...engineInfo(runtime), ...runtimeStatus(),
       runtimeKeys: runtime ? Object.keys(runtime) : [],
+      sandbox: sandboxStatus(),
+      capabilities: (() => {
+        const sb = sandboxStatus()
+        return [
+          ...(sb.mode === 'real' ? ['sandbox:fs', 'sandbox:node'] : []),
+          ...(sb.mode === 'real' && sb.shell ? ['sandbox:shell'] : []),
+          ...(sb.mode === 'real' && sb.npm ? ['sandbox:npm'] : []),
+        ]
+      })(),
       serverTime: new Date().toISOString(),
     }))
   }
@@ -53,7 +63,10 @@ const server = createServer((req, res) => {
       })
       res.write(': rs-builder agent stream\n\n')
       try {
-        const runtime = parseRuntimeKeys(req.headers['x-rsb-keys'])
+        const runtime = {
+          ...(parseRuntimeKeys(req.headers['x-rsb-keys']) ?? {}),
+          seedFiles: sanitizeSeedFiles(payload.files) ?? undefined,
+        }
         for await (const event of runEvents(payload.prompt, payload.locale, req.signal, runtime)) {
           if (req.signal?.aborted) break
           send(res, event)

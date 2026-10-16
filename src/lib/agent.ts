@@ -59,7 +59,7 @@ export type Scenario = {
 }
 
 export type AgentEvent =
-  | { type: 'run_start'; scenarioId?: string; runId?: string; model?: string }
+  | { type: 'run_start'; scenarioId?: string; runId?: string; model?: string; sandbox?: SandboxInfo | null }
   | { type: 'model'; model: string }
   | { type: 'job_meta'; jobId: string; parentJobId?: string | null }
   | { type: 'artifact_meta'; meta: ArtifactMeta }
@@ -77,6 +77,16 @@ export type AgentEvent =
   | { type: 'delivered'; items: L[] }
   | { type: 'done' }
 
+/** What the server-side execution sandbox can really do (probed at runtime). */
+export type SandboxInfo = {
+  mode: 'real' | 'vm'
+  shell: boolean
+  shellBinary: string | null
+  node: string | null
+  npm: boolean
+  project: string | null
+}
+
 export type ArtifactMeta = {
   root: string
   version: number
@@ -87,6 +97,8 @@ export type ArtifactMeta = {
 
 export type RunState = {
   jobId: string | null
+  /** real capabilities of the sandbox that serves this run (null = unknown yet) */
+  sandbox: SandboxInfo | null
   artifactMeta: ArtifactMeta | null
   status: 'idle' | 'running' | 'done' | 'stopped'
   /** provider/model that actually serves the run (live LLM backend only). */
@@ -108,6 +120,7 @@ export const initialRunState: RunState = {
   status: 'idle',
   model: null,
   jobId: null,
+  sandbox: null,
   artifactMeta: null,
   plan: [],
   thoughts: [],

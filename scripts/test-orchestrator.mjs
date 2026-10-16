@@ -293,5 +293,114 @@ check((captured2?.files ?? []).some(([p]) => p === 'index.html'), 'files survive
 check((captured2?.binaries ?? []).some(([n]) => n === 'deck.pptx'), 'binaries serialize through the checkpoint (base64) → ' + (captured2?.binaries ?? []).map(([n]) => n).join(','))
 cpMock.server.close()
 
+
+/* --- G: the REAL sandbox — shell + node child processes inside the loop -- */
+function sandboxMockServer(port) {
+  let calls = 0
+  const tc = (name, args) => [{ id: 'call_g' + ++calls, type: 'function', function: { name, arguments: JSON.stringify(args) } }]
+  const script = (messages) => {
+    const execFlags = messages.map((m) => m.role === 'user' && String(m.content).startsWith('Execute step'))
+    const step = execFlags.filter(Boolean).length || 0
+    const lastExec = execFlags.lastIndexOf(true)
+    const inStep = lastExec >= 0 ? messages.slice(lastExec + 1).filter((m) => m.role === 'tool').length : 0
+    const hasPlan = messages.some((m) => m.role === 'assistant' && (m.tool_calls ?? []).some((c) => c.function.name === 'submit_plan'))
+    if (!hasPlan) {
+      return {
+        content: 'Real sandbox proof, two steps.',
+        tool_calls: tc('submit_plan', {
+          intro: 'Build the site with shell and node, then patch and deliver it.',
+          steps: [
+            { title: 'Build with shell and node', estimate: '1m' },
+            { title: 'Patch and deliver', estimate: '1m' },
+          ],
+        }),
+      }
+    }
+    if (step <= 1) {
+      if (inStep === 0) {
+        return {
+          content: null,
+          tool_calls: tc('run_shell', {
+            note: 'scaffold with the shell',
+            command:
+              'mkdir -p site && printf %s "<!doctype html><html><head><link rel=stylesheet href=styles.css></head><body><h1>SHELL-BUILT</h1></body></html>" > site/index.html && ls site && wc -c site/index.html',
+          }),
+        }
+      }
+      if (inStep === 1) {
+        return {
+          content: null,
+          tool_calls: tc('run_code', {
+            note: 'style + secret probe',
+            code:
+              "const fs = require('fs'); fs.writeFileSync('site/styles.css', 'h1{color:#c8f751}'); console.log('css-bytes', fs.statSync('site/styles.css').size); console.log('no-secrets', process.env.OPENAI_API_KEY === undefined && process.env.RSB_SESSION_SECRET === undefined)",
+          }),
+        }
+      }
+      return { content: null, tool_calls: tc('step_done', { summary: 'shell + node built the site' }) }
+    }
+    if (inStep === 0) return { content: null, tool_calls: tc('edit_file', { path: 'site/index.html', old_text: 'SHELL-BUILT', new_text: 'SHELL-BUILT+PATCHED' }) }
+    if (inStep === 1) return { content: null, tool_calls: tc('run_shell', { command: 'node -e "console.log(\'inline-node-ok\')" && cat site/styles.css' }) }
+    return { content: null, tool_calls: tc('deliver_artifact', { title: 'Sandbox proof', from_file: 'site/index.html' }) }
+  }
+  const server = createServer((req, res) => {
+    let body = ''
+    req.on('data', (c) => (body += c))
+    req.on('end', () => {
+      if (req.method === 'GET' && req.url.endsWith('/models')) {
+        res.setHeader('content-type', 'application/json')
+        return res.end(JSON.stringify({ data: [] }))
+      }
+      const payload = JSON.parse(body || '{}')
+      const move = script(payload.messages ?? [])
+      res.setHeader('content-type', 'application/json')
+      res.end(JSON.stringify({ choices: [{ message: { role: 'assistant', content: move.content, tool_calls: move.tool_calls } }] }))
+    })
+  })
+  return { server: server.listen(port) }
+}
+
+const sbxMock = sandboxMockServer(8899)
+process.env.RSB_PROVIDERS = 'openrouter'
+process.env.OPENAI_API_KEY = 'test-key'
+process.env.RSB_SESSION_SECRET = 'test-session-secret'
+process.env.OPENAI_BASE_URL = 'http://127.0.0.1:8899/v1'
+process.env.OPENAI_MODEL = ''
+delete process.env.RSB_LLM_MODEL_CHAIN
+const { sandboxStatus, __resetCapabilities: resetCaps } = await import('../server/orchestrator.mjs')
+const { __resetCapabilities: resetSandboxCaps } = await import('../server/sandbox.mjs')
+
+const real = await collect('Build a site using the real sandbox', 'en')
+const realConsole = real.events.filter((e) => e.type === 'console').map((e) => e.line)
+const realFiles = real.events.filter((e) => e.type === 'file').map((e) => e.file.path)
+const realArtifact = real.events.find((e) => e.type === 'artifact')?.artifact
+const runStart = real.events.find((e) => e.type === 'run_start')
+
+check(runStart?.sandbox?.mode === 'real' && runStart.sandbox.shell === true, 'run_start reports the real sandbox capabilities → ' + JSON.stringify(runStart?.sandbox))
+check(realConsole.some((l) => /^sandbox · real/.test(l)), 'the console banner says what the sandbox really is → ' + realConsole[0])
+check(realConsole.some((l) => /css-bytes \d+/.test(l)), 'run_code executed in a REAL node process and wrote to disk → ' + (realConsole.find((l) => /css-bytes/.test(l)) ?? 'missing'))
+check(realConsole.some((l) => l.includes('no-secrets true')), 'the child process sees NO provider keys or session secrets')
+check(realConsole.some((l) => l.includes('inline-node-ok')), 'run_shell spawned node inside the shell command')
+check(realFiles.includes('site/index.html') && realFiles.includes('site/styles.css'), 'files created by shell/node are synced into the workspace → ' + realFiles.join(', '))
+check(real.events.some((e) => e.type === 'tool' && e.tool.name === 'shell'), 'shell tool calls are visible in the run trace')
+check(Boolean(realArtifact?.html?.includes('SHELL-BUILT+PATCHED')), 'edit_file patched a file that the SHELL created (disk-backed editing)')
+check((realArtifact?.siteFiles ?? []).some((f) => f.path === 'site/styles.css'), 'the delivered site tree carries the code-generated stylesheet → ' + (realArtifact?.siteFiles ?? []).map((f) => f.path).join(','))
+check(sandboxStatus().mode === 'real' && sandboxStatus().shell === true, 'sandboxStatus() exposes the probe for /api/v1/status → ' + JSON.stringify(sandboxStatus()))
+
+/* --- H: honest degradation when the host has no real sandbox ------------ */
+process.env.RSB_SANDBOX = 'vm'
+resetSandboxCaps()
+const degraded = await collect('Build a site using the real sandbox', 'en')
+const degradedConsole = degraded.events.filter((e) => e.type === 'console').map((e) => e.line)
+check(degradedConsole.some((l) => /^sandbox · vm/.test(l)), 'degraded run announces the vm sandbox instead of pretending → ' + degradedConsole[0])
+check(degradedConsole.some((l) => /shell unavailable|disabled/i.test(l)), 'run_shell reports itself unavailable in vm mode')
+check(degraded.events.at(-1)?.type === 'done' && Boolean(degraded.events.find((e) => e.type === 'artifact')), 'the run still finishes with an artifact when the sandbox is degraded')
+check(degraded.events.find((e) => e.type === 'run_start')?.sandbox?.mode === 'vm', 'run_start is honest about the degraded mode')
+delete process.env.RSB_SANDBOX
+delete process.env.RSB_SESSION_SECRET
+resetSandboxCaps()
+check(sandboxStatus().mode === 'real', 'capabilities recover after the flag is removed')
+sbxMock.server.close()
+
 console.log(ok ? '\nORCHESTRATOR OK' : '\nORCHESTRATOR FAILED')
 process.exit(ok ? 0 : 1)

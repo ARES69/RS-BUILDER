@@ -9,7 +9,7 @@ import { Logo } from '@/components/Logo'
 import { Icon } from '@/components/ui/Icon'
 import { Composer } from '@/components/home/Composer'
 import { Thread } from '@/components/workspace/Thread'
-import { RunPanel } from '@/components/workspace/RunPanel'
+import { RunPanel, type RunTab } from '@/components/workspace/RunPanel'
 import { ThemeToggle } from '@/components/layout/ThemeToggle'
 import { AGENT_API_URL, fetchBackendStatus, remoteEnabled, type BackendStatus } from '@/lib/remoteAgent'
 import { SettingsPanel } from '@/components/workspace/SettingsPanel'
@@ -117,7 +117,14 @@ export default function Workspace() {
     [replay],
   )
 
-  const [tab, setTab] = useState<'plan' | 'preview' | 'browser' | 'files' | 'console'>('plan')
+  const [tab, setTab] = useState<RunTab>('plan')
+  // Sandbox edits the user made by hand: they ride along with the NEXT prompt
+  // so the agent continues from the human's version of the project.
+  const [pendingFiles, setPendingFiles] = useState<Record<string, string> | null>(null)
+  const armFiles = useCallback((files: Record<string, string>) => {
+    setPendingFiles((prev) => ({ ...(prev ?? {}), ...files }))
+    setMobileView('chat')
+  }, [])
   const [mobileView, setMobileView] = useState<'chat' | 'panel'>('chat')
   const booted = useRef(false)
 
@@ -144,13 +151,34 @@ export default function Workspace() {
     if (state.artifact) setTab('preview')
   }, [state.artifact])
 
+  /**
+   * The visible workspace as a seed map. In queued mode the server seeds
+   * follow-ups from the parent job; in sync mode (Blob suspended, local
+   * backend) there is no jobId — so the browser hands over the project it
+   * already shows. Same promise either way: the next run continues THIS work.
+   */
+  const workspaceSnapshot = useCallback((): Record<string, string> | null => {
+    if (!state.files.length) return null
+    const out: Record<string, string> = {}
+    let total = 0
+    for (const file of state.files.slice(0, 12)) {
+      if (file.content.length > 180_000) continue
+      if (total + file.content.length > 380_000) break
+      out[file.path] = file.content
+      total += file.content.length
+    }
+    return Object.keys(out).length ? out : null
+  }, [state.files])
+
   const run = useCallback(
     (prompt: string) => {
       setMobileView('chat')
       setTab('plan')
-      void start(prompt, { parentJobId: continueFrom })
+      const files = pendingFiles ?? (continueFrom ? null : workspaceSnapshot())
+      setPendingFiles(null)
+      void start(prompt, { parentJobId: continueFrom, files })
     },
-    [start, continueFrom],
+    [start, continueFrom, pendingFiles, workspaceSnapshot],
   )
 
   const running = state.status === 'running'
@@ -448,6 +476,24 @@ export default function Workspace() {
 
           <div className="shrink-0 border-t border-line bg-bg/70 p-3 backdrop-blur sm:p-4">
             <div className="mx-auto max-w-3xl">
+              {pendingFiles && Object.keys(pendingFiles).length ? (
+                <div className="mb-2 flex flex-wrap items-center gap-2 rounded-xl border border-accent/35 bg-accent/[0.07] px-3 py-2">
+                  <span className="font-mono text-[10.5px] uppercase tracking-[0.12em] text-accent">
+                    {t('app.sandboxArmedTitle')}
+                  </span>
+                  <span className="truncate font-mono text-[11px] text-muted">
+                    {Object.keys(pendingFiles).join(', ')}
+                  </span>
+                  <span className="hidden text-[11px] text-faint sm:inline">{t('app.sandboxArmedHint')}</span>
+                  <button
+                    type="button"
+                    onClick={() => setPendingFiles(null)}
+                    className="ml-auto rounded-md border border-line px-2 py-0.5 text-[11px] text-muted transition-colors hover:text-fg"
+                  >
+                    {t('app.sandboxArmedClear')}
+                  </button>
+                </div>
+              ) : null}
               <Composer
                 onRun={run}
                 running={running}
@@ -467,7 +513,13 @@ export default function Workspace() {
             mobileView !== 'panel' && 'hidden lg:block',
           )}
         >
-          <RunPanel state={state} activeTab={tab} onTabChange={setTab} />
+          <RunPanel
+            state={state}
+            activeTab={tab}
+            onTabChange={setTab}
+            onArmFiles={armFiles}
+            armedCount={pendingFiles ? Object.keys(pendingFiles).length : 0}
+          />
         </section>
       </div>
 

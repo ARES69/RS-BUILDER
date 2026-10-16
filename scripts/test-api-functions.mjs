@@ -343,10 +343,15 @@ const artifactsHandler = (await import('../api/v1/artifacts.mjs')).default
 }
 {
   const res = mockRes()
-  await handler(mockReq('POST', { prompt: 'Улучши страницу: добавь футер', locale: 'ru', mode: 'queue', parentJobId: jobId }, { headers: { cookie } }), res)
+  // the user edited files in the sandbox tab: those edits ride along and WIN
+  // over the parent artifact (the human's version is the source of truth)
+  const USER_INDEX = '<!doctype html><html><body><h1>USER EDITED IN SANDBOX</h1></body></html>'
+  await handler(mockReq('POST', { prompt: 'Улучши страницу: добавь футер', locale: 'ru', mode: 'queue', parentJobId: jobId, files: { 'index.html': USER_INDEX, 'notes/user.md': '# my edit' } }, { headers: { cookie } }), res)
   const childId = JSON.parse(res.chunks.join('')).jobId
   const child = await getJob(childId)
   report(child.lineageRoot === jobId && Boolean(child.seedFiles?.['index.html']), 'continue-run inherits lineage root and seeded workspace → ' + Object.keys(child.seedFiles || {}).join(','))
+  report(child.seedFiles?.['index.html'] === USER_INDEX, 'sandbox edits override the parent artifact in the follow-up seed')
+  report(child.seedFiles?.['notes/user.md'] === '# my edit', 'files that only exist in the user edits join the seed → ' + Object.keys(child.seedFiles || {}).join(','))
   report(Array.isArray(child.seedTurns) && child.seedTurns.some((m) => m.role === 'user' && /Исторический прогон|Кредитный прогон|parent/.test(String(m.content)) === false && m.role === 'user'), 'follow-up inherits the parent dialogue turns → ' + (child.seedTurns || []).length + ' messages')
   const userTurns = (child.seedTurns || []).filter((m) => m.role === 'user')
   report(userTurns.length >= 1 && child.prompt !== userTurns.map((m) => m.content).join(''), 'inherited dialogue + new follow-up message form the conversation')
@@ -381,6 +386,17 @@ const artifactsHandler = (await import('../api/v1/artifacts.mjs')).default
   const missing = mockRes()
   await artifactsHandler(mockReq('GET', null, { query: { job: 'job_nope123456' } }), missing)
   report(missing.statusCode === 404, 'unknown job in public fetch → 404')
+}
+
+{
+  // hostile/garbage `files` payloads must never reach a job workspace
+  const bad = mockRes()
+  await handler(mockReq('POST', { prompt: 'escape probe', locale: 'en', mode: 'queue', files: { '../evil.txt': 'x', '/etc/passwd': 'y', 'node_modules/a.js': 'z', 'ok.txt': 'fine' } }, { headers: { cookie } }), bad)
+  const badJob = bad.statusCode === 202 ? await getJob(JSON.parse(bad.chunks.join('')).jobId) : null
+  const seeded = Object.keys(badJob?.seedFiles ?? {})
+  report(bad.statusCode === 202 || bad.statusCode === 200, 'malformed files map does not break the endpoint → ' + bad.statusCode)
+  report(!seeded.some((p) => p.includes('..') || p.startsWith('/') || p.includes('node_modules')), 'escapes/absolute/dependency paths are dropped from the seed → ' + (seeded.join(',') || 'none'))
+  report(seeded.includes('ok.txt') && !seeded.includes('/etc/passwd'), 'safe entries survive, absolute system paths do not → ' + seeded.join(','))
 }
 
 mockLlm.close()

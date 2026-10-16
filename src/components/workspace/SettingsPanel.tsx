@@ -19,6 +19,16 @@ export type BackendStatus = {
   cooldowns?: Record<string, number>
   runtimeKeys?: boolean
   quotaNote?: string
+  jobStore?: string
+  capabilities?: string[]
+  sandbox?: {
+    mode: 'real' | 'vm'
+    shell: boolean
+    shellBinary: string | null
+    node: string | null
+    npm: boolean
+    project: string | null
+  } | null
 } | null
 
 export async function fetchBackendStatus(): Promise<BackendStatus> {
@@ -115,6 +125,18 @@ export function SettingsPanel({ open, onClose }: { open: boolean; onClose: () =>
               <div>
                 runtime keys: {status.runtimeKeys ? t('app.statusYourKeys') : '—'}
               </div>
+              {status.sandbox ? (
+                <div className="mt-1 break-all" title={t('app.sandboxCapsHint')}>
+                  sandbox:{' '}
+                  <b className={status.sandbox.mode === 'real' ? 'text-accent' : 'text-amber-500'}>
+                    {status.sandbox.mode}
+                  </b>
+                  {status.sandbox.node ? ' · node ' + status.sandbox.node.replace(/^v/, '') : ''}
+                  {status.sandbox.shellBinary ? ' · ' + status.sandbox.shellBinary : ''}
+                  {status.sandbox.npm ? ' · npm' : ''}
+                </div>
+              ) : null}
+              {status.jobStore ? <div>job store: {status.jobStore}</div> : null}
               {cooldowns.length > 0 && (
                 <div className="mt-1 text-amber-500">
                   {t('app.statusCooldowns')}: {cooldowns.map(([id, until]) => id + ' ' + countdown(until)).join(', ')}
