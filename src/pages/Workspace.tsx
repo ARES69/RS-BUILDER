@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+
+const RESUME_KEY = 'rsb-resume-v1'
 import { Link, useSearchParams } from 'react-router-dom'
 import { ArrowLeft, Coins, ExternalLink, History, LogIn, LogOut, Plus, RotateCcw, Settings, Sparkles } from 'lucide-react'
 import { useI18n } from '@/i18n'
@@ -121,6 +123,39 @@ export default function Workspace() {
   // Sandbox edits the user made by hand: they ride along with the NEXT prompt
   // so the agent continues from the human's version of the project.
   const [pendingFiles, setPendingFiles] = useState<Record<string, string> | null>(null)
+  // store-less durability: the browser keeps the latest resume token, so a run
+  // that died with the tab (or with the platform timeout) continues from here
+  const [savedResume, setSavedResume] = useState<{ prompt: string; token: string; stepIndex: number; total: number; at: number } | null>(() => {
+    try {
+      const raw = localStorage.getItem(RESUME_KEY)
+      const parsed = raw ? JSON.parse(raw) : null
+      return parsed && parsed.token && Date.now() - parsed.at < 24 * 3600_000 ? parsed : null
+    } catch {
+      return null
+    }
+  })
+  const lastPrompt = useRef<string | null>(null)
+  useEffect(() => {
+    if (!state.resume || !lastPrompt.current) return
+    const entry = {
+      prompt: lastPrompt.current,
+      token: state.resume.token,
+      stepIndex: state.resume.stepIndex,
+      total: state.resume.total,
+      at: Date.now(),
+    }
+    try {
+      localStorage.setItem(RESUME_KEY, JSON.stringify(entry))
+      setSavedResume(entry)
+    } catch { /* private mode: resume simply stays unavailable */ }
+  }, [state.resume])
+  useEffect(() => {
+    // a finished run makes its resume point stale
+    if (state.status === 'done' && savedResume) {
+      try { localStorage.removeItem(RESUME_KEY) } catch { /* ignore */ }
+      setSavedResume(null)
+    }
+  }, [state.status]) // eslint-disable-line react-hooks/exhaustive-deps
   const armFiles = useCallback((files: Record<string, string>) => {
     setPendingFiles((prev) => ({ ...(prev ?? {}), ...files }))
     setMobileView('chat')
@@ -171,12 +206,13 @@ export default function Workspace() {
   }, [state.files])
 
   const run = useCallback(
-    (prompt: string) => {
+    (prompt: string, opts?: { resume?: string | null }) => {
       setMobileView('chat')
       setTab('plan')
-      const files = pendingFiles ?? (continueFrom ? null : workspaceSnapshot())
+      lastPrompt.current = prompt
+      const files = pendingFiles ?? (continueFrom || opts?.resume ? null : workspaceSnapshot())
       setPendingFiles(null)
-      void start(prompt, { parentJobId: continueFrom, files })
+      void start(prompt, { parentJobId: continueFrom, files, resume: opts?.resume ?? null })
     },
     [start, continueFrom, pendingFiles, workspaceSnapshot],
   )
@@ -476,6 +512,31 @@ export default function Workspace() {
 
           <div className="shrink-0 border-t border-line bg-bg/70 p-3 backdrop-blur sm:p-4">
             <div className="mx-auto max-w-3xl">
+              {savedResume && state.status !== 'running' ? (
+                <div className="mb-2 flex flex-wrap items-center gap-2 rounded-xl border border-cyan/40 bg-cyan/[0.08] px-3 py-2">
+                  <span className="font-mono text-[10.5px] uppercase tracking-[0.12em] text-cyan">
+                    {t('app.resumeChip', { current: Math.min(savedResume.stepIndex + 1, savedResume.total), total: savedResume.total })}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => void run(savedResume.prompt, { resume: savedResume.token })}
+                    className="rounded-md bg-cyan/15 px-2.5 py-1 text-[11.5px] font-semibold text-cyan transition-colors hover:bg-cyan/25"
+                  >
+                    {t('app.resumeCta')}
+                  </button>
+                  <span className="hidden min-w-0 flex-1 truncate text-[11px] text-faint sm:inline">{savedResume.prompt}</span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      try { localStorage.removeItem(RESUME_KEY) } catch { /* ignore */ }
+                      setSavedResume(null)
+                    }}
+                    className="ml-auto rounded-md border border-line px-2 py-0.5 text-[11px] text-muted transition-colors hover:text-fg"
+                  >
+                    {t('app.resumeDrop')}
+                  </button>
+                </div>
+              ) : null}
               {state.queueNote ? (
                 <div className="mb-2 flex items-start gap-2 rounded-xl border border-amber-500/40 bg-amber-500/[0.08] px-3 py-2">
                   <span className="mt-0.5 shrink-0 font-mono text-[10.5px] uppercase tracking-[0.12em] text-amber-500">

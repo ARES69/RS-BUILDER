@@ -128,7 +128,12 @@ async function* sseEvents(response: Response): AsyncGenerator<AgentEvent> {
  * Closing the tab, losing the network or a frozen worker do not kill the run;
  * the tail re-attaches with its cursor until a terminal status arrives.
  */
-export type RunOptions = { parentJobId?: string | null; files?: Record<string, string> | null }
+export type RunOptions = {
+  parentJobId?: string | null
+  files?: Record<string, string> | null
+  /** store-less resume point from a previous (truncated/closed) run */
+  resume?: string | null
+}
 
 async function* runQueued(prompt: string, locale: Locale, signal?: AbortSignal, opts?: RunOptions): AsyncGenerator<AgentEvent> {
   const base = (AGENT_API_URL ?? '').replace(/\/$/, '')
@@ -141,6 +146,7 @@ async function* runQueued(prompt: string, locale: Locale, signal?: AbortSignal, 
       mode: 'queue',
       parentJobId: opts?.parentJobId || undefined,
       files: opts?.files && Object.keys(opts.files).length ? opts.files : undefined,
+      resume: opts?.resume || undefined,
     }),
     signal,
   })
@@ -274,6 +280,7 @@ async function* runRemoteSync(
       prompt,
       locale,
       files: opts?.files && Object.keys(opts.files).length ? opts.files : undefined,
+      resume: opts?.resume || undefined,
     }),
     signal,
   })

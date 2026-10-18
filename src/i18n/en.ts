@@ -328,6 +328,9 @@ export const en = {
     sandboxPreview: 'Live preview',
     sandboxConsole: 'Browser console',
     sandboxConsoleEmpty: 'console.log / errors from the preview land here',
+    resumeChip: 'Interrupted run · step {current} of {total}',
+    resumeCta: 'Resume',
+    resumeDrop: 'discard',
     sandboxCapsHint: 'What the server sandbox can really do right now: real = project directory on disk + node/shell child processes, vm = in-process JavaScript only',
   },
 

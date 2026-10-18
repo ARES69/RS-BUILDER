@@ -26,6 +26,8 @@
 import { buildPptx, buildSrt, httpSession, searchWeb, zipStore } from './tools.mjs'
 import { createSandbox, capabilities as sandboxCapabilities, executeInVm } from './sandbox.mjs'
 
+const ELIDED_ARG_TOOLS = new Set(['write_file', 'deliver_artifact', 'make_slides', 'make_captions'])
+
 const L = (en, ru) => ({ en, ru })
 const both = (text) => ({ en: text, ru: text })
 
@@ -812,6 +814,86 @@ export function executeCode(args, workspaceFiles) {
   return executeInVm(String(args?.code ?? ''), workspaceFiles)
 }
 
+/**
+ * Store-less durability: serialize a checkpoint into a compact token the
+ * CLIENT holds (localStorage) and hands back with `resume`. No server state
+ * needed — the run record lives with its owner. Binaries are left out (too
+ * heavy for a request payload); files are capped and may be dropped entirely
+ * if the token would exceed the budget.
+ */
+export function encodeResumeToken(snap) {
+  const build = (withFiles) => {
+    const lean = {
+      v: 2,
+      phase: snap.phase,
+      stepIndex: snap.stepIndex,
+      plan: snap.plan ?? null,
+      intro: snap.intro ?? null,
+      credits: snap.credits ?? 0,
+      totalCalls: snap.totalCalls ?? 0,
+      usedModel: snap.usedModel ?? null,
+      turns: condenseTurns(snap.turns ?? []),
+      files: withFiles ? (snap.files ?? []).filter(([, c]) => String(c).length < 120_000).slice(0, 10) : [],
+      binaries: [],
+    }
+    return lean
+  }
+  try {
+    let json = JSON.stringify(build(true))
+    if (json.length > 180_000) json = JSON.stringify(build(false))
+    if (json.length > 180_000) return null
+    return Buffer.from(json, 'utf8').toString('base64url')
+  } catch {
+    return null
+  }
+}
+
+/** Validates a client-supplied resume token back into a checkpoint object. */
+export function decodeResumeToken(token) {
+  try {
+    const raw = String(token ?? '')
+    if (!raw || raw.length > 400_000) return null
+    const parsed = JSON.parse(Buffer.from(raw, 'base64url').toString('utf8'))
+    if (parsed?.v !== 2 || typeof parsed.stepIndex !== 'number' || !Array.isArray(parsed.turns)) return null
+    return parsed
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Dialogue condensation shared by follow-ups and resume tokens: past tool
+ * payloads carry the bulk of a conversation while the workspace files are the
+ * source of truth — elide them and cap the window (free-tier TPM windows).
+ */
+export function condenseTurns(turns) {
+  if (!Array.isArray(turns) || !turns.length) return []
+  const kept = turns.slice(-28)
+  const cutAt = Math.max(0, kept.length - 4)
+  return kept.map((m, i) => {
+    if (m.role === 'assistant' && Array.isArray(m.toolCalls)) {
+      const toolCalls = m.toolCalls.map((c) => {
+        if (ELIDED_ARG_TOOLS.has(c.name)) {
+          let hint = {}
+          try {
+            const a = typeof c.args === 'string' ? JSON.parse(c.args) : c.args
+            hint = { path: a?.path ?? a?.from_file ?? a?.file_name ?? undefined, elided: 'content lives in the workspace' }
+          } catch { /* keep empty hint */ }
+          return { ...c, args: JSON.stringify(hint) }
+        }
+        return c
+      })
+      const content = typeof m.content === 'string' && m.content.length > 400 ? m.content.slice(0, 400) + ' …' : m.content
+      return { ...m, content, toolCalls }
+    }
+    if (m.role === 'tool') {
+      const cap = i < cutAt ? 240 : 1200
+      return { ...m, results: (m.results ?? []).map((r) => ({ ...r, text: String(r.text ?? '').slice(0, cap) + (String(r.text ?? '').length > cap ? ' …' : '') })) }
+    }
+    return m
+  })
+}
+
 /** What the sandbox can actually do right now — reported to the UI honestly. */
 export function sandboxStatus(sandbox) {
   const caps = sandboxCapabilities()
@@ -989,6 +1071,7 @@ async function* runOrchestratedInner(prompt, locale, signal, runtime, sandbox) {
 
   /* --- planning turn ------------------------------------------------ */
   const skips = []
+  const tokenOutbox = []
   const reportSkip = (skip) => {
     const reason = skip.reason === 'cooldown' ? 'cooling down (account quota)' : 'HTTP ' + skip.status + ' ' + (skip.message ?? '')
     return {
@@ -1024,7 +1107,6 @@ async function* runOrchestratedInner(prompt, locale, signal, runtime, sandbox) {
     sandbox.seedFrom(files, binaries)
   }
   const checkpoint = (stepIndex, phase) => {
-    if (typeof runtime?.onCheckpoint !== 'function') return
     let cpTurns = turns
     try {
       const snap = {
@@ -1052,9 +1134,28 @@ async function* runOrchestratedInner(prompt, locale, signal, runtime, sandbox) {
         json = JSON.stringify(snap)
         if (json.length > 1_500_000) return
       }
-      runtime.onCheckpoint(snap)
+      if (typeof runtime?.onCheckpoint === 'function') runtime.onCheckpoint(snap)
+      // store-less durability: the client keeps the latest token, so a run can
+      // be resumed after a closed tab / a platform timeout even with no queue
+      const token = encodeResumeToken(snap)
+      if (token) tokenOutbox.push({ token, stepIndex, total: plan?.length ?? 0 })
     } catch {
       /* checkpointing is best-effort */
+    }
+  }
+  const drainTokens = function* () {
+    while (tokenOutbox.length) {
+      const t = tokenOutbox.shift()
+      yield {
+        type: 'resume_token',
+        stepIndex: t.stepIndex,
+        total: t.total,
+        token: t.token,
+        text: L(
+          'Resume point saved in your browser (step ' + t.stepIndex + ' of ' + t.total + ').',
+          'Точка возобновления сохранена в браузере (шаг ' + t.stepIndex + ' из ' + t.total + ').',
+        ),
+      }
     }
   }
   if (!cp) {
@@ -1141,6 +1242,7 @@ async function* runOrchestratedInner(prompt, locale, signal, runtime, sandbox) {
     yield { type: 'message', role: 'agent', text: both(intro || 'Plan ready — executing.') }
     yield { type: 'plan', steps: plan.map((s) => ({ id: s.id, title: s.title, estimate: s.estimate })) }
     checkpoint(0, 'steps')
+    yield* drainTokens()
   }
 
   /* --- execution loop ----------------------------------------------- */
@@ -1402,10 +1504,12 @@ async function* runOrchestratedInner(prompt, locale, signal, runtime, sandbox) {
     yield { type: 'progress', credits, stepIndex, total: plan.length }
     yield { type: 'step_done', stepId: step.id }
     checkpoint(stepIndex + 1, 'steps')
+    yield* drainTokens()
   }
 
   /* --- artifact: requested, or synthesized from the workspace ------- */
   checkpoint(plan.length, 'artifact')
+  yield* drainTokens()
   const siteFiles = [...files.entries()]
     .filter(([p, c]) => /\.(html|css|js|mjs|json|svg|md|txt)$/.test(p) && typeof c === 'string' && c.length < 400_000)
     .slice(0, 40)

@@ -20,6 +20,8 @@ function reduce(state: RunState, event: AgentEvent): RunState {
       return { ...state, model: event.model }
     case 'queue_degraded':
       return { ...state, queueNote: event.text }
+    case 'resume_token':
+      return { ...state, resume: { token: event.token, stepIndex: event.stepIndex, total: event.total } }
     case 'job_meta':
       return { ...state, jobId: event.jobId }
     case 'artifact_meta':
@@ -95,7 +97,10 @@ export function useAgentRun() {
   }, [])
 
   const start = useCallback(
-    async (prompt: string, opts?: { parentJobId?: string | null; files?: Record<string, string> | null }) => {
+    async (
+      prompt: string,
+      opts?: { parentJobId?: string | null; files?: Record<string, string> | null; resume?: string | null },
+    ) => {
       controller.current?.abort()
       const next = new AbortController()
       controller.current = next

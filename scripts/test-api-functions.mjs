@@ -412,6 +412,33 @@ const artifactsHandler = (await import('../api/v1/artifacts.mjs')).default
 }
 
 {
+  // store-less durability: every step boundary streams a resume_token; handing
+  // it back continues the run from that boundary without re-planning
+  const rres = mockRes()
+  await handler(mockReq('POST', { prompt: 'Прогон с точками возобновления', locale: 'ru' }, {}), rres)
+  const rsse = rres.chunks.join('')
+  const tokens = rsse
+    .split('\n\n')
+    .filter((f) => f.includes('"resume_token"'))
+    .map((f) => JSON.parse(f.split('\n').find((l) => l.startsWith('data:')).slice(5)))
+  report(tokens.length >= 2 && tokens.every((t) => typeof t.token === 'string' && t.token.length > 50), 'step boundaries stream resume tokens → ' + tokens.length + ' token(s)')
+  const mid = tokens.filter((t) => t.stepIndex === 1).pop()
+  report(Boolean(mid), 'a mid-run token carries stepIndex 1 of ' + mid?.total)
+  const cres = mockRes()
+  await handler(mockReq('POST', { prompt: 'Прогон с точками возобновления', locale: 'ru', resume: mid?.token }, {}), cres)
+  const csse = cres.chunks.join('')
+  const cevents = csse.split('\n\n').flatMap((c) => c.split('\n').filter((l) => l.startsWith('data:')).map((l) => { try { return JSON.parse(l.slice(5)) } catch { return null } }).filter(Boolean))
+  const ctypes = cevents.map((e) => e.type)
+  report(!ctypes.includes('plan'), 'resumed run does not re-stream the plan')
+  report(ctypes.filter((t) => t === 'step_start').length === 1, 'resumed run executes only the remaining step → step_start x' + ctypes.filter((t) => t === 'step_start').length)
+  report(ctypes.includes('done') && ctypes.includes('artifact'), 'resumed run still delivers an artifact and finishes')
+  report(cevents.some((e) => e.type === 'message' && /fresh worker invocation/i.test(e.text?.en ?? '')), 'resume announces the hand-off honestly')
+  const badres = mockRes()
+  await handler(mockReq('POST', { prompt: 'garbage resume', locale: 'en', resume: 'not-a-token-@@@' }, {}), badres)
+  report(badres.statusCode === 200, 'a garbage resume token degrades to a fresh run instead of 500')
+}
+
+{
   // P0 canary: when the store cannot WRITE, the queue capability disappears
   // from /status and the sync stream says queue_degraded with the real reason
   const { __resetStoreProbe } = await import('../server/jobstore.mjs')

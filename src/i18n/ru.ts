@@ -330,6 +330,9 @@ export const ru: Dict = {
     sandboxPreview: 'Живое превью',
     sandboxConsole: 'Консоль браузера',
     sandboxConsoleEmpty: 'сюда падают console.log и ошибки превью',
+    resumeChip: 'Прерванный прогон · шаг {current} из {total}',
+    resumeCta: 'Возобновить',
+    resumeDrop: 'сбросить',
     sandboxCapsHint: 'Что реально умеет серверная песочница сейчас: real = проектная папка на диске + node/shell как дочерние процессы, vm = только JavaScript в процессе',
   },
 
