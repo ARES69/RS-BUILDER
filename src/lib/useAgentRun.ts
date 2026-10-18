@@ -14,9 +14,12 @@ function reduce(state: RunState, event: AgentEvent): RunState {
         model: event.model ?? null,
         jobId: state.jobId,
         sandbox: event.sandbox ?? state.sandbox,
+        queueNote: state.queueNote,
       }
     case 'model':
       return { ...state, model: event.model }
+    case 'queue_degraded':
+      return { ...state, queueNote: event.text }
     case 'job_meta':
       return { ...state, jobId: event.jobId }
     case 'artifact_meta':

@@ -111,9 +111,12 @@ const report = (good, msg) => { console.log((good ? 'PASS  ' : 'FAIL  ') + msg);
   const stream = res.chunks.join('')
   const events = stream.split('\n\n').flatMap((c) => c.split('\n').filter((l) => l.startsWith('data:')).map((l) => JSON.parse(l.slice(5))))
   const types = events.map((e) => e.type)
+  // contract: the stream ends with done, then the hosting result (artifact_meta)
   const good =
     res.headers['content-type']?.includes('text/event-stream') &&
-    types[0] === 'run_start' && types.at(-1) === 'done' &&
+    types[0] === 'run_start' && types.includes('done') &&
+    ['done', 'artifact_meta'].includes(types.at(-1)) &&
+    types.indexOf('artifact_meta') > types.indexOf('artifact') &&
     types.includes('plan') && types.includes('artifact') &&
     events.find((e) => e.type === 'thought')?.text?.ru?.length > 0
   report(good, 'POST /api/v1/runs → ' + events.length + ' SSE events, ru locale, artifact=' + (events.find((e) => e.type === 'artifact')?.artifact?.kind))
@@ -124,7 +127,7 @@ const report = (good, msg) => { console.log((good ? 'PASS  ' : 'FAIL  ') + msg);
   const res = mockRes()
   const req = mockReq('GET')
   req.headers['x-rsb-keys'] = JSON.stringify({ groq: 'gsk-test' })
-  statusHandler(req, res)
+  await statusHandler(req, res)
   const json = JSON.parse(res.chunks.join(''))
   report(
     res.statusCode === 200 && json.ok === true && json.runtimeKeys.join(',') === 'groq' && json.engine === 'llm' && 'cooldowns' in json && 'catalogs' in json,
@@ -171,7 +174,11 @@ let jobId = null
   await workerHandler(mockReq('POST', { jobId, kickToken: job.kickToken }), res)
   const done = await getJob(jobId)
   const types = done.events.map((e) => e.type)
-  report(done.status === 'done' && types[0] === 'run_start' && types.at(-1) === 'done' && types.includes('artifact'), 'worker drains the engine into the job log → ' + done.events.length + ' events, status ' + done.status + (done.error ? ' ERROR: ' + done.error : ''))
+  report(
+    done.status === 'done' && types[0] === 'run_start' && types.includes('done') && types.includes('artifact') &&
+      types.indexOf('artifact_meta') > types.indexOf('artifact'),
+    'worker drains the engine into the job log (artifact_meta after artifact) → ' + done.events.length + ' events, status ' + done.status + (done.error ? ' ERROR: ' + done.error : ''),
+  )
 }
 {
   const res = mockRes()
@@ -386,6 +393,45 @@ const artifactsHandler = (await import('../api/v1/artifacts.mjs')).default
   const missing = mockRes()
   await artifactsHandler(mockReq('GET', null, { query: { job: 'job_nope123456' } }), missing)
   report(missing.statusCode === 404, 'unknown job in public fetch → 404')
+}
+
+{
+  // P3: an anonymous SYNC run must host its artifact too — the gallery fills
+  // even while the queue is degraded
+  const sres = mockRes()
+  await handler(mockReq('POST', { prompt: 'Синхронная страница для галереи', locale: 'ru' }, {}), sres)
+  const sse = sres.chunks.join('')
+  const metaFrame = sse.split('\n\n').find((f) => f.includes('"artifact_meta"'))
+  report(Boolean(metaFrame), 'sync run streams artifact_meta with the permanent urls')
+  const meta = metaFrame ? JSON.parse(metaFrame.split('\n').find((l) => l.startsWith('data:')).slice(5)) : null
+  report(String(meta?.meta?.pageUrl ?? '').startsWith('fs://'), 'sync artifact got a hosted url → ' + meta?.meta?.pageUrl)
+  const gres = mockRes()
+  await artifactsHandler(mockReq('GET', null, { query: { public: '1' } }), gres)
+  const gal2 = JSON.parse(gres.chunks.join(''))
+  report(gal2.gallery.some((g) => String(g.jobId).startsWith('sync_')), 'the public gallery fills from sync runs → ' + gal2.gallery.length + ' entries')
+}
+
+{
+  // P0 canary: when the store cannot WRITE, the queue capability disappears
+  // from /status and the sync stream says queue_degraded with the real reason
+  const { __resetStoreProbe } = await import('../server/jobstore.mjs')
+  process.env.VERCEL = '1'
+  process.env.BLOB_STORE_ID = 'store_deadbeefdeadbeef'
+  delete process.env.BLOB_READ_WRITE_TOKEN
+  __resetStoreProbe()
+  const pres = mockRes()
+  await statusHandler(mockReq('GET', null, {}), pres)
+  const pstatus = JSON.parse(pres.chunks.join(''))
+  report(pstatus.queue?.ok === false, '/status probe reports the broken store honestly → ' + String(pstatus.queue?.error ?? pstatus.queue?.code).slice(0, 90))
+  report(!(pstatus.capabilities ?? []).includes('queue'), 'capabilities drop "queue" while the store cannot write → ' + JSON.stringify(pstatus.capabilities))
+  const dres = mockRes()
+  await handler(mockReq('POST', { prompt: 'degrade probe', locale: 'en', mode: 'queue' }, {}), dres)
+  const dsse = dres.chunks.join('')
+  report(dres.statusCode === 200, 'queue request degrades to a sync stream instead of 500/503')
+  report(dsse.includes('"queue_degraded"'), 'the stream carries queue_degraded with the reason')
+  delete process.env.VERCEL
+  delete process.env.BLOB_STORE_ID
+  __resetStoreProbe()
 }
 
 {

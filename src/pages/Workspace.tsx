@@ -476,6 +476,14 @@ export default function Workspace() {
 
           <div className="shrink-0 border-t border-line bg-bg/70 p-3 backdrop-blur sm:p-4">
             <div className="mx-auto max-w-3xl">
+              {state.queueNote ? (
+                <div className="mb-2 flex items-start gap-2 rounded-xl border border-amber-500/40 bg-amber-500/[0.08] px-3 py-2">
+                  <span className="mt-0.5 shrink-0 font-mono text-[10.5px] uppercase tracking-[0.12em] text-amber-500">
+                    queue
+                  </span>
+                  <span className="text-[11.5px] leading-snug text-muted">{l(state.queueNote)}</span>
+                </div>
+              ) : null}
               {pendingFiles && Object.keys(pendingFiles).length ? (
                 <div className="mb-2 flex flex-wrap items-center gap-2 rounded-xl border border-accent/35 bg-accent/[0.07] px-3 py-2">
                   <span className="font-mono text-[10.5px] uppercase tracking-[0.12em] text-accent">

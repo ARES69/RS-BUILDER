@@ -8,6 +8,7 @@ import { createServer } from 'node:http'
 import { runEvents, VERSION, engineInfo, runtimeStatus } from './engine.mjs'
 import { parseRuntimeKeys, sandboxStatus } from './orchestrator.mjs'
 import { sanitizeSeedFiles } from './sandbox.mjs'
+import { probeJobStore } from './jobstore.mjs'
 
 const PORT = Number(process.env.PORT ?? 8787)
 
@@ -19,7 +20,7 @@ const cors = {
 
 const send = (res, event) => res.write('data: ' + JSON.stringify(event) + '\n\n')
 
-const server = createServer((req, res) => {
+const server = createServer(async (req, res) => {
   const url = new URL(req.url ?? '/', 'http://localhost')
 
   if (req.method === 'OPTIONS') {
@@ -32,8 +33,10 @@ const server = createServer((req, res) => {
   }
   if (req.method === 'GET' && url.pathname === '/v1/status') {
     const runtime = parseRuntimeKeys(req.headers['x-rsb-keys'])
+    const queue = await probeJobStore().catch(() => ({ kind: 'fs', ok: true }))
     res.writeHead(200, { ...cors, 'Content-Type': 'application/json' })
     return res.end(JSON.stringify({
+      queue,
       ok: true, name: 'rs-builder-agent-server', version: VERSION, runtime: 'node-standalone',
       ...engineInfo(runtime), ...runtimeStatus(),
       runtimeKeys: runtime ? Object.keys(runtime) : [],

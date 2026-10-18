@@ -67,6 +67,13 @@ function llmMockServer(port, { models, recordAuth } = {}) {
       const payload = JSON.parse(body || '{}')
       hits[payload.model] = (hits[payload.model] ?? 0) + 1
       if (payload.model === 'broken-model') {
+        // model-level failure: the account is fine, this model is gone
+        res.statusCode = 404
+        res.setHeader('content-type', 'application/json')
+        return res.end(JSON.stringify({ error: { message: 'model not found for this key' } }))
+      }
+      if (payload.model === 'dead-credit-model') {
+        // account-level failure: billing state, not model luck
         res.statusCode = 402
         res.setHeader('content-type', 'application/json')
         return res.end(JSON.stringify({ error: { message: 'This request requires more credits' } }))
@@ -150,7 +157,7 @@ check((await import('../server/orchestrator.mjs')).parseRuntimeKeys('{"openroute
 check((await import('../server/orchestrator.mjs')).parseRuntimeKeys('not-json') === null, 'parseRuntimeKeys rejects garbage')
 process.env.OPENAI_API_KEY = 'test-key'
 
-/* --- A: openrouter chain skips dead-key (401) and 402 models ---------- */
+/* --- A: openrouter chain skips dead-key (401) and 404 models ---------- */
 process.env.RSB_PROVIDERS = 'openrouter'
 process.env.RSB_LLM_MODEL_CHAIN = 'dead-key-model, broken-model, mock-model'
 
@@ -161,7 +168,8 @@ const consoleLines = events.filter((e) => e.type === 'console').map((e) => e.lin
 const files = events.filter((e) => e.type === 'file').map((e) => e.file.path)
 const artifact = events.find((e) => e.type === 'artifact')?.artifact
 
-check(model === 'openrouter/mock-model', 'chain skips the 401 and 402 models and continues on the next → ' + model)
+check(model === 'openrouter/mock-model', 'chain skips the 401 and 404 models and continues on the next → ' + model)
+check(consoleLines.some((l) => /provider skip · openrouter\/dead-key-model · HTTP 401/.test(l)), 'skipped links are reported in the trace, not hidden → ' + (consoleLines.find((l) => l.includes('provider skip')) ?? 'none'))
 check(types[0] === 'run_start' && types.at(-1) === 'done', 'run_start … done sequence (' + events.length + ' events)')
 check(plan?.steps?.length === 2, 'plan streamed from the mock LLM (2 steps)')
 check(consoleLines.some((l) => l.includes('2+2= 4')) && consoleLines.some((l) => l.includes('sum= 240')), 'run_code really executed in the vm sandbox → ' + JSON.stringify(consoleLines.slice(0, 3)))
@@ -184,6 +192,28 @@ if (!searchOk) {
 }
 check(searchOk, 'search_web returned live results into the console trace')
 check(events.some((e) => e.type === 'browse' && /Mock Portal/.test(e.page.title)), 'http_session drove a real cookie-jar request')
+
+/* --- A2: account-level 402 cools the WHOLE provider (no per-model burn) -- */
+process.env.RSB_LLM_MODEL_CHAIN = 'dead-credit-model, mock-model'
+const hitsBefore = openRouterMock.hits['mock-model'] ?? 0
+const creditEvents = []
+let creditError = null
+try {
+  const { runEvents: runCredit } = await import('../server/engine.mjs')
+  for await (const event of runCredit('Credit probe run', 'en')) creditEvents.push(event)
+} catch (error) {
+  creditError = error
+}
+check(Boolean(creditError) && /402/.test(String(creditError.message)), 'an account-level 402 fails the run honestly instead of burning every model → ' + String(creditError?.message).slice(0, 60))
+check((openRouterMock.hits['mock-model'] ?? 0) === hitsBefore, 'the healthy model of a cooled provider is not probed in the same run')
+check(creditEvents.some((e) => e.type === 'console' && /provider skip · openrouter\/dead-credit-model · HTTP 402/.test(e.line ?? '')), 'the trace names the refused provider and status → ' + JSON.stringify(creditEvents.filter((e) => e.type === 'console').map((e) => e.line).slice(0, 4)))
+const { providerEntries: entriesNow2, __resetProviderCooldowns: resetCd2 } = await import('../server/orchestrator.mjs')
+let cooledEntries = await entriesNow2()
+check(cooledEntries.length === 0, 'the provider is cooled down after the account-level 402 → entries=' + cooledEntries.length)
+resetCd2()
+cooledEntries = await entriesNow2()
+check(cooledEntries.length === 2, 'cooldown reset restores both models of the chain → entries=' + cooledEntries.length)
+process.env.RSB_LLM_MODEL_CHAIN = 'dead-key-model, broken-model, mock-model'
 
 /* --- A3: transient 400 parse failure retries on the same model -------- */
 process.env.RSB_LLM_MODEL_CHAIN = 'parse-flaky'

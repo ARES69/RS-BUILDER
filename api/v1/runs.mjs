@@ -10,7 +10,8 @@
 import { randomBytes } from 'node:crypto'
 import { runEvents } from '../../server/engine.mjs'
 import { parseRuntimeKeys } from '../../server/orchestrator.mjs'
-import { createJob, getJob, jobStoreKind } from '../../server/jobstore.mjs'
+import { createJob, getJob, jobStoreKind, probeJobStore } from '../../server/jobstore.mjs'
+import { publishArtifact } from '../../server/artifacts.mjs'
 import { sessionFromRequest } from '../../server/auth.mjs'
 import { MIN_RUN_CREDITS, balance } from '../../server/credits.mjs'
 import { kickWorker, workerOrigin } from '../../server/worker.mjs'
@@ -93,10 +94,17 @@ export default async function handler(req, res) {
   try { payload = JSON.parse(body || '{}') } catch { /* defaults */ }
 
   /* --- queued mode: create a job, kick a worker, return immediately --- */
+  let queueDegradedReason = null
+  const storeProbe = await probeJobStore().catch(() => null)
   if (payload.mode === 'queue') {
     if (!queueAvailable()) {
       res.status(503).json({ error: 'queue unavailable: no durable job store configured' })
       return
+    }
+    if (storeProbe && !storeProbe.ok) {
+      // the canary already knows the store cannot write: skip the doomed
+      // createJob and degrade loudly instead of silently
+      queueDegradedReason = storeProbe.error ?? storeProbe.code ?? 'store write probe failed'
     }
     reapStaleJobs().catch(() => null)
     const ownerIdEarly = sessionFromRequest(req)
@@ -133,7 +141,9 @@ export default async function handler(req, res) {
     }
     if (overrideFiles) seedFiles = { ...(seedFiles ?? {}), ...overrideFiles }
     let job = null
-    try {
+    if (queueDegradedReason) {
+      job = null
+    } else try {
       job = await createJob({
         prompt: payload.prompt ?? '',
         locale: payload.locale,
@@ -147,6 +157,7 @@ export default async function handler(req, res) {
     } catch (storeError) {
       // Blob store suspended/unavailable: degrade to synchronous streaming
       // instead of 500-ing — the run still happens, just not persisted/queued
+      queueDegradedReason = queueDegradedReason ?? String(storeError?.message ?? storeError).slice(0, 240)
       job = null
     }
     if (!job) {
@@ -178,6 +189,22 @@ export default async function handler(req, res) {
   res.setHeader('X-Accel-Buffering', 'no')
   res.flushHeaders?.()
   res.write(': rs-builder agent stream\n\n')
+  if (queueDegradedReason) {
+    // the queue promise ("survives a closed tab") is OFF for this run: say so
+    // in the stream itself, not only in /status
+    res.write(
+      'data: ' +
+        JSON.stringify({
+          type: 'queue_degraded',
+          reason: String(queueDegradedReason).slice(0, 240),
+          text: {
+            en: 'Queue is offline right now (' + String(queueDegradedReason).slice(0, 120) + '). This run streams live and ends with the tab — persistence returns when the store recovers.',
+            ru: 'Очередь сейчас выключена (' + String(queueDegradedReason).slice(0, 120) + '). Прогон идёт живым стримом и заканчивается вместе с вкладкой — персистентность вернётся с восстановлением стора.',
+          },
+        }) +
+        '\n\n',
+    )
+  }
 
   // Client disconnects surface on the RESPONSE socket in serverless bridges
   // (the request stream closes as soon as its body is consumed, so listening
@@ -188,6 +215,8 @@ export default async function handler(req, res) {
   })
   res.on('error', () => abort.abort())
 
+  let lastArtifact = null
+  let servedModel = null
   try {
     const runtime = {
       ...(parseRuntimeKeys(req.headers['x-rsb-keys']) ?? {}),
@@ -195,7 +224,34 @@ export default async function handler(req, res) {
     }
     for await (const event of runEvents(payload.prompt, payload.locale, abort.signal, runtime)) {
       if (abort.signal.aborted) break
+      if (event.type === 'artifact') lastArtifact = event.artifact
+      if (event.type === 'model') servedModel = event.model
       res.write('data: ' + JSON.stringify(event) + '\n\n')
+    }
+    // P3: anonymous sync runs must host their artifact too — otherwise the
+    // public gallery never fills while the queue is degraded
+    if (lastArtifact && !abort.signal.aborted) {
+      const synthetic = {
+        id: 'sync_' + randomBytes(6).toString('hex'),
+        lineageRoot: null,
+        prompt: payload.prompt ?? '',
+        locale: payload.locale,
+        events: servedModel ? [{ type: 'model', model: servedModel }] : [],
+      }
+      try {
+        const meta = await publishArtifact(synthetic, lastArtifact)
+        res.write('data: ' + JSON.stringify({ type: 'artifact_meta', meta }) + '\n\n')
+      } catch (hostError) {
+        res.write(
+          'data: ' +
+            JSON.stringify({
+              type: 'console',
+              stepId: 'hosting',
+              line: 'artifact hosting unavailable: ' + String(hostError?.message ?? hostError).slice(0, 160),
+            }) +
+            '\n\n',
+        )
+      }
     }
   } catch (error) {
     res.write('data: ' + JSON.stringify({ type: 'error', message: String(error?.message ?? error) }) + '\n\n')

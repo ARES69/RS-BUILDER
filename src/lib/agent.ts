@@ -62,6 +62,7 @@ export type AgentEvent =
   | { type: 'run_start'; scenarioId?: string; runId?: string; model?: string; sandbox?: SandboxInfo | null }
   | { type: 'model'; model: string }
   | { type: 'job_meta'; jobId: string; parentJobId?: string | null }
+  | { type: 'queue_degraded'; reason: string; text: L }
   | { type: 'artifact_meta'; meta: ArtifactMeta }
   | { type: 'plan'; steps: { id: string; title: L; estimate: string }[] }
   | { type: 'step_start'; stepId: string }
@@ -99,6 +100,8 @@ export type RunState = {
   jobId: string | null
   /** real capabilities of the sandbox that serves this run (null = unknown yet) */
   sandbox: SandboxInfo | null
+  /** the queue is offline for this run: it dies with the tab (honest banner) */
+  queueNote: L | null
   artifactMeta: ArtifactMeta | null
   status: 'idle' | 'running' | 'done' | 'stopped'
   /** provider/model that actually serves the run (live LLM backend only). */
@@ -121,6 +124,7 @@ export const initialRunState: RunState = {
   model: null,
   jobId: null,
   sandbox: null,
+  queueNote: null,
   artifactMeta: null,
   plan: [],
   thoughts: [],

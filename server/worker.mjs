@@ -99,8 +99,14 @@ export async function processJob(jobId) {
     if (artEvent?.artifact && !chained) {
       try {
         job.artifactMeta = await publishArtifact(job, artEvent.artifact)
-      } catch {
-        /* hosting is best-effort; the run itself still succeeds */
+        // the UI learns the permanent url from the stream, not from a refresh
+        buffer.push({ type: 'artifact_meta', meta: job.artifactMeta })
+      } catch (hostError) {
+        buffer.push({
+          type: 'console',
+          stepId: 'hosting',
+          line: 'artifact hosting unavailable: ' + String(hostError?.message ?? hostError).slice(0, 160),
+        })
       }
     }
     if (cancelled) {

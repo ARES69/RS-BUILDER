@@ -76,6 +76,45 @@ async function fsWrite(job) {
 
 export const jobStoreKind = () => (blobToken() ? 'blob' : 'fs')
 
+/* ---- store health canary -------------------------------------------------
+ * The queue promise ("the run survives a closed tab") used to degrade
+ * SILENTLY: createJob threw, runs fell back to sync, and nobody — us, the UI,
+ * the audits — could tell why. This probe writes one tiny doc (fixed key,
+ * cached 60s per warm instance) and reports the truth in /v1/status, so the
+ * queue capability is advertised only when the store actually writes.
+ */
+let probeCache = { at: 0, result: null }
+export async function probeJobStore({ force = false } = {}) {
+  const kind = jobStoreKind()
+  if (kind !== 'blob') return { kind, ok: true, note: 'fs adapter (local/dev)', at: new Date().toISOString() }
+  if (!force && probeCache.result && Date.now() - probeCache.at < 60_000) return probeCache.result
+  const at = new Date().toISOString()
+  try {
+    await putJobDoc(prefix + 'probe/store', { probe: true, at })
+    // read-back is informational: an overwritten doc can briefly serve the
+    // previous version (eventual consistency), so ok is decided by the write
+    const back = await getJobDoc(prefix + 'probe/store')
+    probeCache = { at: Date.now(), result: { kind, ok: true, readBack: Boolean(back), at } }
+  } catch (error) {
+    probeCache = {
+      at: Date.now(),
+      result: {
+        kind,
+        ok: false,
+        code: error?.code ?? error?.name ?? null,
+        error: String(error?.message ?? error).slice(0, 240),
+        at,
+      },
+    }
+  }
+  return probeCache.result
+}
+
+/** Test hook: drop the cached probe result (env flips in the api suite). */
+export function __resetStoreProbe() {
+  probeCache = { at: 0, result: null }
+}
+
 /* ---- generic JSON document ops (jobs, users, history indexes) ---- */
 
 const fsPath = (path) => join(fsDir(), path.replace(/\//g, '__') + '.json')

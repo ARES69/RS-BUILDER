@@ -598,6 +598,16 @@ export async function providerEntries(signal, runtime) {
 }
 
 /** Snapshot for GET /v1/status: cooldowns and cached catalogs (no secrets). */
+/** Static honesty notes about tiers that mislead users in the chain list. */
+export function providerNotes() {
+  return {
+    'opencode-zen':
+      'anonymous free tier is policy-blocked since Oct 2026 (403 FreeTierError); with OPENCODE_API_KEY it is the PAID catalog — balance 0 means 402 until topped up (15 min cooldown after the first refusal)',
+    openrouter: ':free models share 50 req/day per account, resets 00:00 UTC',
+    groq: 'free tier rate-limits per minute; the chain waits retry-after ≤45s',
+  }
+}
+
 export function runtimeStatus() {
   const now = Date.now()
   const cooldowns = {}
@@ -696,7 +706,7 @@ async function chatOnce(entry, system, turns, signal) {
  * the run while other entries are still untried. Only an aborted signal or a
  * fully exhausted chain throws (engine.mjs then falls back deterministically).
  */
-async function chat(entries, system, turns, signal) {
+async function chat(entries, system, turns, signal, onSkip) {
   let lastError = null
   for (const entry of entries) {
     if (signal?.aborted) throw new Error('run aborted')
@@ -704,6 +714,7 @@ async function chat(entries, system, turns, signal) {
     // skips the whole provider instead of burning a request per model
     if ((providerCooldownUntil.get(entry.id) ?? 0) > Date.now()) {
       lastError = lastError ?? new Error(entry.id + ' is cooling down (account quota)')
+      onSkip?.({ id: entry.id, model: entry.model, reason: 'cooldown' })
       continue
     }
     // Groq-style transient 400s ("Parsing failed / failed_generation": the model
@@ -723,6 +734,14 @@ async function chat(entries, system, turns, signal) {
           continue
         }
         if (attempt === 0 && /Parsing failed|failed_generation|Tool call validation failed/i.test(String(error?.message ?? ''))) continue
+        const status = Number(/(?:HTTP|LLM) (\d{3})/.exec(String(error?.message ?? ''))?.[1] ?? 0)
+        onSkip?.({ id: entry.id, model: entry.model, status: status || null, message: String(error?.message ?? '').slice(0, 140) })
+        // credits/policy failures are account state, not model luck: a keyed
+        // zen with balance 0 would otherwise burn one call PER MODEL per run
+        if (status === 402 || status === 403) {
+          const until = Date.now() + 15 * 60 * 1000
+          if (until > (providerCooldownUntil.get(entry.id) ?? 0)) providerCooldownUntil.set(entry.id, until)
+        }
         break
       }
     }
@@ -850,8 +869,15 @@ function collectDownloads(files, binaries) {
 /* System prompt                                                       */
 /* ------------------------------------------------------------------ */
 
-function systemPrompt(locale) {
+function systemPrompt(locale, sandbox) {
   const lang = locale === 'ru' ? 'Russian' : 'English'
+  const caps = sandbox
+    ? sandbox.real
+      ? 'Sandbox on THIS host: real project directory, /bin/sh' + (sandbox.caps?.shell ? '' : ' (mini-shell)') + ', node ' + (sandbox.caps?.node ?? '?') +
+        (sandbox.caps?.npm ? ', npm install available' : ', npm IS NOT installed — do not waste calls on npm/npx: vendor code or use node built-ins') +
+        '. Child processes see no secrets and are killed at the timeout.'
+      : 'Sandbox on THIS host is DEGRADED (in-process vm only): run_shell is unavailable and run_code has no fs/net — say so honestly if a task needs them.'
+    : ''
   return [
     'You are RS-BUILDER, an autonomous agent that produces finished deliverables instead of advice.',
     'You work in a sandboxed workspace with tools. Follow this protocol exactly:',
@@ -860,6 +886,7 @@ function systemPrompt(locale) {
     '3. Use run_code for computations, search_web + web_fetch for external facts, wide_research for multi-entity landscapes, make_slides for real PPTX decks, make_captions for SRT, http_session for form/portal flows, write_file/read_file for workspace files.',
     '3b. You have a REAL sandbox: run_code executes in a Node.js process with cwd = your project directory (node:fs, fetch, npm packages all work) and run_shell runs shell commands there. Prefer them whenever a task is easier with code than by hand-writing files: scaffolding trees, transforming data, generating SVG/PNG, minifying, validating your own HTML/JS, computing real numbers. If a command fails, read the error and adapt — never invent output.',
     '3c. Sandbox limits: each run_code/run_shell call is killed after its timeout (default 15-20s, request timeout_s up to 45), the project directory is EPHEMERAL (it disappears when the run ends — anything worth keeping must be written as a workspace file so it is hosted and downloadable), and no long-running servers (a dev server will be killed; deliver static files instead).',
+    '3d. ' + caps + ' Respect exactly this capability set instead of probing the host.',
     '4. After finishing each step call step_done with a one-line summary.',
     '5. Write documents with write_file in chunks smaller than 4KB, then call deliver_artifact with {title, from_file} pointing at the final .html (do not repeat the html inline).',
     '5b. Websites may be MULTI-FILE: index.html + styles.css + app.js with relative links — the whole tree gets hosted permanently. Fix files with edit_file (exact first-occurrence patch), never rewrite whole files for small changes. list_files before editing.',
@@ -961,6 +988,18 @@ async function* runOrchestratedInner(prompt, locale, signal, runtime, sandbox) {
   const alive = () => !signal?.aborted && Date.now() < deadline
 
   /* --- planning turn ------------------------------------------------ */
+  const skips = []
+  const reportSkip = (skip) => {
+    const reason = skip.reason === 'cooldown' ? 'cooling down (account quota)' : 'HTTP ' + skip.status + ' ' + (skip.message ?? '')
+    return {
+      type: 'console',
+      stepId: 'chain',
+      line: 'provider skip · ' + skip.id + (skip.model ? '/' + skip.model : '') + ' · ' + reason.trim(),
+    }
+  }
+  const drainSkips = function* (stepId) {
+    while (skips.length) yield { ...reportSkip(skips.shift()), stepId: stepId ?? 'chain' }
+  }
   let plan = null
   let intro = null
   let usedModel = null
@@ -1022,8 +1061,17 @@ async function* runOrchestratedInner(prompt, locale, signal, runtime, sandbox) {
     yield {
       type: 'run_start',
       runId,
-      model: entries.slice(0, 3).map((e) => e.id + '/' + e.model).join(' → ') + (entries.length > 3 ? ' → …(' + entries.length + ' total)' : ''),
+      // candidates, NOT the serving model: the resolved one arrives as a
+      // `model` event on the first successful call (the UI chip shows that)
+      chain: entries.slice(0, 8).map((e) => e.id + '/' + e.model),
       sandbox: sandboxStatus(sandbox),
+    }
+    yield {
+      type: 'console',
+      stepId: 'chain',
+      line:
+        'chain: ' + entries.slice(0, 4).map((e) => e.id + '/' + e.model).join(' → ') +
+        (entries.length > 4 ? ' → …' : '') + ' · first live link serves',
     }
     yield {
       type: 'console',
@@ -1046,7 +1094,17 @@ async function* runOrchestratedInner(prompt, locale, signal, runtime, sandbox) {
   }
 
   for (let attempt = 0; attempt < 3 && !plan && alive(); attempt++) {
-    const reply = await chat(entries, systemPrompt(locale), turns, signal)
+    yield* drainSkips(null)
+    let reply
+    try {
+      reply = await chat(entries, systemPrompt(locale, sandbox), turns, signal, (skip) => {
+        skips.push(skip)
+      })
+    } catch (error) {
+      // surface WHY the chain died before the run fails honestly
+      yield* drainSkips(null)
+      throw error
+    }
     if (!usedModel && reply.model) {
       usedModel = reply.model
       yield { type: 'model', model: reply.model }
@@ -1100,7 +1158,16 @@ async function* runOrchestratedInner(prompt, locale, signal, runtime, sandbox) {
 
     let done = false
     for (let call = 0; call < MAX_TOOL_CALLS_PER_STEP && !done && alive() && totalCalls < MAX_TOTAL_TOOL_CALLS; call++) {
-      const reply = await chat(entries, systemPrompt(locale), turns, signal)
+      yield* drainSkips(step.id)
+      let reply
+      try {
+        reply = await chat(entries, systemPrompt(locale, sandbox), turns, signal, (skip) => {
+          skips.push(skip)
+        })
+      } catch (error) {
+        yield* drainSkips(step.id)
+        throw error
+      }
       turns.push({ role: 'assistant', content: reply.content, toolCalls: reply.toolCalls })
       if (!reply.toolCalls.length) {
         if (reply.content) yield { type: 'thought', stepId: step.id, text: both(reply.content.slice(0, 400)) }
