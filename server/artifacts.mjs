@@ -15,9 +15,15 @@ import { mkdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { getJobDoc, listDocs, putJobDoc } from './jobstore.mjs'
+import { up, upstashConfigured } from './upstash.mjs'
 
 const storeId = () => process.env.ARTIFACTS_STORE_ID || null
-export const artifactsKind = () => (storeId() ? 'blob' : 'fs')
+export const artifactsKind = () => (upstashConfigured() ? 'redis' : storeId() ? 'blob' : 'fs')
+
+/** Public origin that serves /api/v1/artfile (redis-hosted artifacts). */
+export const artifactPublicBase = () =>
+  process.env.RSB_PUBLIC_BASE ||
+  'https://' + (process.env.VERCEL_PROJECT_PRODUCTION_URL || process.env.VERCEL_URL || 'localhost:8787')
 
 let blobP = null
 async function blob() {
@@ -50,6 +56,12 @@ function fsDir() {
 }
 
 async function publishOne(path, body, contentType) {
+  if (upstashConfigured()) {
+    // binaries live in redis as base64; the public url is our own flat route
+    const buf = Buffer.isBuffer(body) ? body : Buffer.from(String(body), 'utf8')
+    await up.set('rsb-art/' + path, buf.toString('base64'))
+    return artifactPublicBase() + '/api/v1/artfile?path=' + encodeURIComponent(path)
+  }
   if (storeId()) {
     const { put } = await blob()
     const res = await put(path, body, {
@@ -128,6 +140,13 @@ export async function publishArtifact(job, artifact) {
   }).catch(() => {})
 
   return { root, version, pageUrl, files, versions }
+}
+
+/** Reads a redis-hosted artifact body (null when absent / other store kind). */
+export async function readRedisArtifact(path) {
+  if (!upstashConfigured() || !/^art\//.test(String(path))) return null
+  const b64 = await up.get('rsb-art/' + String(path))
+  return b64 ? Buffer.from(String(b64), 'base64') : null
 }
 
 /** Real runs published before the gallery existed (backfill, all genuine). */

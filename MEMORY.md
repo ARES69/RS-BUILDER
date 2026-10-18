@@ -85,6 +85,12 @@
 - Sync/degrade-транспорт не даёт jobId → follow-up сеется с браузера
   (workspaceSnapshot в Workspace.tsx); в queue-режиме — с parent job. Правки юзера из
   вкладки Sandbox едут полем `files` (sanitizeSeedFiles: ≤12 файлов, ≤400KB, без ../).
+- Redis-стор (спека-вариант B): server/upstash.mjs — свой тонкий REST-клиент
+  (POST /pipeline, массив команд, БЕЗ заголовка Upstash-Encoding → строки приходят
+  plain; SDK @upstash/redis снят: его base64-кварки съели час). jobStoreKind:
+  redis → blob → fs; артефакты в redis base64-строками, публично через плоский
+  GET /api/v1/artfile?path=art/… (без auth, immutable, CORS); индексы коллекций =
+  SET idx:<dir>. Моки в api-съют говорят на настоящем wire (pipeline + encoding-header).
 - Store-less durability (ответ P1 без стора): каждый checkpoint стримит ивент
   `resume_token` (base64url чекпоинта v2, ≤180KB, бинарии наружу); клиент держит
   последний в localStorage `rsb-resume-v1` (сутки) и рисует чип «Возобновить»;
@@ -263,6 +269,9 @@
    (creation может быть заблокирован тем же threshold — проверять на месте), (b) Upstash
    Redis free-ключ → redis-адаптер jobstore (спека-вариант B), (c) Vercel Pro.
    Resume-токен уже закрыл «>300s» и «закрыл вкладку» без стора (п.14 таймлайна).
+   18.10: redis-адаптер готов и тестирован (202+jobId, worker, artfile, реплей, галерея);
+   ждёт UPSTASH_REDIS_REST_URL/TOKEN в env прода — после этого приёмка спеки юзера
+   закрывается целиком без новых сервисов кроме Upstash free.
 1. **Биллинг v2**: Stripe-чекаут → ledger-topup записи (нужен Stripe secret key
    юзера), страничка планов с покупкой пакетов кредитов по тарифам прайсинга.
 2. **Auth-hardening v2**: OAuth GitHub как апгрейд входа (коды и лимиты уже есть).

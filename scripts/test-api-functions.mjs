@@ -438,6 +438,89 @@ const artifactsHandler = (await import('../api/v1/artifacts.mjs')).default
   report(badres.statusCode === 200, 'a garbage resume token degrades to a fresh run instead of 500')
 }
 
+/* --- Redis adapter (Upstash REST): the queue lives without Vercel Blob ---- */
+const upstashMock = createServer((req, res) => {
+  const store = (upstashMock.store ??= new Map())
+  const sets = (upstashMock.sets ??= new Map())
+  let body = ''
+  req.on('data', (c) => (body += c))
+  req.on('end', () => {
+    const exec = (cmd) => {
+      const [op, ...args] = cmd
+      switch (String(op).toLowerCase()) {
+        case 'set': store.set(args[0], args[1]); return 'OK'
+        case 'get': return store.has(args[0]) ? store.get(args[0]) : null
+        case 'del': return args.filter((k) => store.delete(k)).length
+        case 'sadd': { const k = args[0]; const arr = sets.get(k) ?? []; let n = 0; for (const m of args.slice(1)) if (!arr.includes(m)) { arr.push(m); n++ } sets.set(k, arr); return n }
+        case 'smembers': return sets.get(args[0]) ?? []
+        case 'ping': return 'PONG'
+        default: return null
+      }
+    }
+    let payload = null
+    try { payload = JSON.parse(body || 'null') } catch { /* ignore */ }
+    // the SDK asks for base64-encoded string results by default (Upstash-Encoding)
+    const b64 = req.headers['upstash-encoding'] === 'base64'
+    const enc = (v) =>
+      b64 && typeof v === 'string' ? Buffer.from(v, 'utf8').toString('base64') : Array.isArray(v) ? v.map(enc) : v
+    res.setHeader('content-type', 'application/json')
+    // @upstash/redis wire: POST /pipeline with a bare array of command arrays
+    if (Array.isArray(payload)) {
+      const cmds = payload.every?.((c) => Array.isArray(c)) ? payload : [payload]
+      return res.end(JSON.stringify(cmds.map((c) => ({ result: enc(exec(c)), error: null }))))
+    }
+    if (Array.isArray(payload?.commands)) return res.end(JSON.stringify(payload.commands.map((c) => ({ result: enc(exec(c)), error: null }))))
+    res.end(JSON.stringify({ result: null, error: 'bad request' }))
+  })
+}).listen(8793)
+
+{
+  const { __resetStoreProbe } = await import('../server/jobstore.mjs')
+  const { jobStoreKind } = await import('../server/jobstore.mjs')
+  process.env.UPSTASH_REDIS_REST_URL = 'http://127.0.0.1:8793'
+  process.env.UPSTASH_REDIS_REST_TOKEN = 'mock-token'
+  __resetStoreProbe()
+  report(jobStoreKind() === 'redis', 'redis adapter wins when Upstash creds are present → ' + jobStoreKind())
+  const stres = mockRes()
+  await statusHandler(mockReq('GET', null, {}), stres)
+  const st = JSON.parse(stres.chunks.join(''))
+  report(st.jobStore === 'redis' && st.queue?.ok === true && (st.capabilities ?? []).includes('queue'), 'probe passes on redis and re-advertises the queue capability → ' + JSON.stringify(st.capabilities))
+
+  const qres = mockRes()
+  await handler(mockReq('POST', { prompt: 'Очередь на redis: страница про маяк', locale: 'ru', mode: 'queue' }, {}), qres)
+  report(qres.statusCode === 202, 'mode:queue returns 202 with a jobId on the redis store → ' + qres.statusCode)
+  const qid = JSON.parse(qres.chunks.join('')).jobId
+  const wres = mockRes()
+  await workerHandler(mockReq('POST', { jobId: qid, kickToken: (await getJob(qid)).kickToken }), wres)
+  const qdone = await getJob(qid)
+  report(qdone.status === 'done' && Boolean(qdone.artifactMeta?.pageUrl), 'worker drains the queued run on redis → ' + qdone.status)
+  report(String(qdone.artifactMeta?.pageUrl ?? '').includes('/api/v1/artfile?path='), 'artifact hosted through the public artfile route → ' + qdone.artifactMeta?.pageUrl)
+
+  const artPath = decodeURIComponent(String(qdone.artifactMeta.pageUrl).split('path=').pop())
+  const ares2 = mockRes()
+  const artfileHandler = (await import('../api/v1/artfile.mjs')).default
+  await artfileHandler(mockReq('GET', null, { query: { path: artPath } }), ares2)
+  const artBody = Buffer.isBuffer(ares2.chunks[0]) ? Buffer.concat(ares2.chunks).toString('utf8') : ares2.chunks.join('')
+  report(ares2.statusCode === 200 && /<html|<!doctype/i.test(artBody), 'GET /artfile serves the hosted page anonymously → ' + ares2.statusCode + ' ' + artBody.slice(0, 40))
+  const badArt = mockRes()
+  await artfileHandler(mockReq('GET', null, { query: { path: '../etc/passwd' } }), badArt)
+  report(badArt.statusCode === 400, 'artfile rejects path traversal → ' + badArt.statusCode)
+
+  const sres2 = mockRes()
+  await streamHandler(mockReq('GET', null, { query: { id: qid, cursor: 0 } }), sres2)
+  const replayed = sres2.chunks.join('').split('\n\n').filter((f) => f.includes('data:')).length
+  report(replayed > 5, 'event replay from cursor works after the run ended (spec #4) → ' + replayed + ' frames')
+
+  const gres2 = mockRes()
+  await artifactsHandler(mockReq('GET', null, { query: { public: '1' } }), gres2)
+  const gal3 = JSON.parse(gres2.chunks.join(''))
+  report(gal3.gallery.some((g) => g.jobId === qid && String(g.pageUrl).includes('artfile')), 'gallery entry points at the redis-hosted page → ' + JSON.stringify(gal3.gallery.map((g) => [g.jobId, String(g.pageUrl).slice(0, 60)])))
+
+  delete process.env.UPSTASH_REDIS_REST_URL
+  delete process.env.UPSTASH_REDIS_REST_TOKEN
+  __resetStoreProbe()
+}
+
 {
   // P0 canary: when the store cannot WRITE, the queue capability disappears
   // from /status and the sync stream says queue_degraded with the real reason

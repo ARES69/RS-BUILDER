@@ -3,7 +3,7 @@
   "private": true,
   "version": "1.0.0",
   "type": "module",
-  "description": "RS-BUILDER \u2014 hands-on AI builder. Marketing site + agent workspace demo.",
+  "description": "RS-BUILDER — hands-on AI builder. Marketing site + agent workspace demo.",
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",

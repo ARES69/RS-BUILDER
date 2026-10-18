@@ -257,6 +257,26 @@ VITE_AGENT_API_URL=http://localhost:8787 npm run dev
   новая инвокация пересоздаёт папку из чекпоинта (`seedFrom`), так что шелл/node видят
   то же состояние, что было до hand-off.
 
+## 11. Redis-стор (Upstash free) — очередь без Vercel Blob
+
+Если Blob-сторы suspended (hobby-пороги) или нужен независимый durable-слой:
+
+1. Upstash → Create database (free: 10k команд/день, 256MB) → скопировать
+   `UPSTASH_REDIS_REST_URL` и `UPSTASH_REDIS_REST_TOKEN`.
+2. Прописать обе переменные в env деплоя (Vercel dashboard → Environment Variables
+   или `vercel env add`). Перезадеплоить.
+3. Проверить: `GET /api/v1/status` → `jobStore: "redis"`, `queue.ok: true`,
+   `capabilities` содержит `"queue"`; POST /runs mode=queue → **202 + jobId**.
+
+Что переезжает: jobs/users/history/ledger/manifests/gallery (server/jobstore.mjs,
+wire = `server/upstash.mjs`: POST /pipeline, массив команд, без base64-заголовка)
+и хостинг артефактов (server/artifacts.mjs): тела лежат base64-строками под
+`rsb-art/art/<jobId>/...`, публичный url = `GET /api/v1/artfile?path=…`
+(без auth, immutable-кэш, CORS-open; path валидируется префиксом `art/`).
+Индексы коллекций — SET-ы `idx:<dir>` (sadd при записи, smembers при listDocs).
+Redis консистентен на чтение, поэтому append-only обходняки Blob здесь не нужны.
+Приоритет адаптеров: redis → blob → fs. Canary probeJobStore() работает для всех.
+
 ## Чек-лист релиза
 
 ```bash

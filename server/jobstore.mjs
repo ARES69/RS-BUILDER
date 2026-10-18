@@ -9,6 +9,7 @@
  * The active adapter is reported by GET /v1/status as jobStore.
  */
 import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises'
+import { up, upstashConfigured } from './upstash.mjs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 
@@ -34,6 +35,18 @@ async function blobReadOptions() {
 }
 
 const prefix = 'rsb-jobs/'
+
+/* ---- redis adapter (Upstash REST, spec option B) -------------------------
+ * When the Blob store is suspended and the user has an Upstash free key, the
+ * whole service layer (jobs, users, history, ledger, manifests, gallery)
+ * moves to Redis over HTTP — no TCP, no new runtime, strong consistency, so
+ * overwrite reads are instant (no append-only workarounds needed).
+ */
+/* the wire itself lives in server/upstash.mjs (documented REST pipeline) */
+const dirOf = (path) => {
+  const i = String(path).lastIndexOf('/')
+  return i > 0 ? String(path).slice(0, i) : String(path)
+}
 
 async function drainStream(stream) {
   if (!stream) return ''
@@ -74,7 +87,7 @@ async function fsWrite(job) {
   await writeFile(join(fsDir(), job.id + '.json'), JSON.stringify(job))
 }
 
-export const jobStoreKind = () => (blobToken() ? 'blob' : 'fs')
+export const jobStoreKind = () => (upstashConfigured() ? 'redis' : blobToken() ? 'blob' : 'fs')
 
 /* ---- store health canary -------------------------------------------------
  * The queue promise ("the run survives a closed tab") used to degrade
@@ -86,7 +99,7 @@ export const jobStoreKind = () => (blobToken() ? 'blob' : 'fs')
 let probeCache = { at: 0, result: null }
 export async function probeJobStore({ force = false } = {}) {
   const kind = jobStoreKind()
-  if (kind !== 'blob') return { kind, ok: true, note: 'fs adapter (local/dev)', at: new Date().toISOString() }
+  if (kind === 'fs') return { kind, ok: true, note: 'fs adapter (local/dev)', at: new Date().toISOString() }
   if (!force && probeCache.result && Date.now() - probeCache.at < 60_000) return probeCache.result
   const at = new Date().toISOString()
   try {
@@ -120,6 +133,15 @@ export function __resetStoreProbe() {
 const fsPath = (path) => join(fsDir(), path.replace(/\//g, '__') + '.json')
 
 export async function getJobDoc(path) {
+  if (upstashConfigured()) {
+    try {
+      const value = await up.get(String(path))
+      if (value === null || value === undefined) return null
+      return typeof value === 'string' ? JSON.parse(value) : value
+    } catch {
+      return null
+    }
+  }
   if (blobToken()) {
     const { get } = await blob()
     try {
@@ -139,6 +161,14 @@ export async function getJobDoc(path) {
 
 /** Lists document paths under a prefix (append-only collections). */
 export async function listDocs(prefix) {
+  if (upstashConfigured()) {
+    try {
+      const list = await up.smembers('idx:' + String(prefix).replace(/\/+$/, ''))
+      return Array.isArray(list) ? list : []
+    } catch {
+      return []
+    }
+  }
   if (blobToken()) {
     const { list } = await blob()
     const out = []
@@ -160,6 +190,11 @@ export async function listDocs(prefix) {
 }
 
 export async function putJobDoc(path, doc) {
+  if (upstashConfigured()) {
+    await up.set(String(path), JSON.stringify(doc))
+    await up.sadd('idx:' + dirOf(path), String(path))
+    return doc
+  }
   if (blobToken()) {
     const { put } = await blob()
     await put(path, JSON.stringify(doc), {
